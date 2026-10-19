@@ -1,0 +1,62 @@
+================================================================================
+AEGISLEDGER MOBILE APP - PHASE 1 PROMPT: ARCHITECTURE, AUTH & WALLET CORE
+================================================================================
+
+[STEP 1: PREVIOUS PHASE VALIDATION]
+Before starting Phase 1 implementation, verify the backend API availability:
+1. Confirm the AegisLedger .NET 10 Web API is running locally or deployed (Swagger accessible at `/swagger`).
+2. Verify API endpoints exist for:
+   - `POST /api/v1/auth/login` (Returns JWT + Refresh Token)
+   - `GET /api/v1/accounts/me` or `GET /api/v1/accounts/{accountNumber}` (Returns LedgerBalance, AvailableBalance, ActiveHoldsSum).
+3. If backend endpoints are still in progress, set up a Mock Service Worker (MSW) or Axios Mock Adapter in the mobile project with exact SRS-compliant JSON payloads.
+
+--------------------------------------------------------------------------------
+
+[STEP 2: PHASE 1 IMPLEMENTATION PROMPT]
+
+We are initializing the AegisLedger Mobile App (React Native / TypeScript / Expo) for retail and enterprise banking clients.
+
+OBJECTIVE:
+Build Phase 1 focusing on clean architecture setup, secure JWT authentication with iOS Keychain / Android Keystore, biometric login, and the Core Wallet Dashboard displaying double-entry balances.
+
+REQUIREMENTS & STEPS:
+
+1. Project Setup & Architecture:
+   - Create React Native app with TypeScript using Expo (SDK 51+): `npx create-expo-app AegisLedgerMobile --template blank-typescript`.
+   - Install dependencies: `@react-navigation/native`, `@react-navigation/native-stack`, `@react-navigation/bottom-tabs`, `zustand`, `@tanstack/react-query`, `axios`, `expo-secure-store`, `expo-local-authentication`, `lucide-react-native`, `react-native-safe-area-context`.
+   - Organize project folders:
+     `/src/api` (axios client & interceptors)
+     `/src/components` (UI elements, cards, balance badges)
+     `/src/hooks` (custom hooks for accounts & auth)
+     `/src/navigation` (AuthStack, AppTabs)
+     `/src/screens` (LoginScreen, BiometricScreen, DashboardScreen, AccountDetailsScreen)
+     `/src/store` (authStore, accountStore)
+     `/src/types` (TypeScript interfaces for API DTOs)
+
+2. Secure Authentication Engine:
+   - Build `authStore.ts` using Zustand:
+     * Manage `isAuthenticated`, `user`, `accessToken`, `refreshToken`, and `isBiometricEnabled` state.
+   - Configure `axiosClient.ts`:
+     * Request interceptor: Automatically attach `Authorization: Bearer <token>` from `SecureStore`.
+     * Response interceptor: Handle `401 Unauthorized` by automatically invoking the token refresh endpoint and retrying the failed request.
+   - Implement `LoginScreen.tsx`:
+     * Input fields for Email/Account ID and Password.
+     * Toggle switch to "Enable FaceID / TouchID Login".
+     * Save tokens securely to `expo-secure-store` on successful login.
+   - Implement Biometric Protection (`BiometricAuthScreen.tsx`):
+     * Check device compatibility using `expo-local-authentication`.
+     * Require biometric verification whenever app transitions from background to foreground.
+
+3. Core Wallet Dashboard (`DashboardScreen.tsx`):
+   - Design a high-density, enterprise fintech UI matching AegisLedger aesthetics (Deep Navy #0F172A theme).
+   - Display Primary Cards:
+     * Account Number & Type Badge (Checking / Savings / Escrow).
+     * **Book Ledger Balance**: Large metric display (e.g., $12,450,890.00).
+     * **Available Liquidity**: Highlighted green metric display (e.g., $12,110,230.00).
+     * **Active Holds Ring-Fenced**: Amber/Warning metric display (e.g., $340,660.00).
+   - Include visual indicator banner: "Double-Entry Invariant Verified: Ledger Balance - Active Holds = Available Balance".
+   - Implement pull-to-refresh gesture using `react-query` `refetch()`.
+
+4. Build Verification:
+   - Ensure app compiles with zero TypeScript errors (`npx tsc`).
+   - Confirm successful login flow, secure token persistence, biometric challenge, and dashboard balance rendering.

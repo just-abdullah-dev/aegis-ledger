@@ -1,0 +1,45 @@
+================================================================================
+AEGISLEDGER WEB PORTAL - PHASE 3 PROMPT
+EOD RECONCILIATION, HANGFIRE MONITOR, AUDIT LOGS & ENTERPRISE POLISH
+================================================================================
+
+[STEP 1: PRE-IMPLEMENTATION VALIDATION CHECK]
+Before executing Phase 3, verify Phase 2 completion:
+1. Verify "Initiate Transfer" modal sends `X-Idempotency-Key` headers and posts transfers successfully.
+2. Confirm double-entry journal view displays expanding DR/CR entry splits accurately.
+3. Confirm Account Holds apply, release, and capture actions update account balances in real time.
+
+
+[STEP 2: PHASE 3 IMPLEMENTATION TASKS]
+Execute Phase 3 enterprise compliance, audit, and background worker monitoring:
+
+1. End-of-Day (EOD) Reconciliation Module (`/src/app/reconciliation/page.tsx`):
+   - Fetch daily reconciliation records from `GET /api/v1/reconciliation/batches`.
+   - Render historical verification table:
+     * Batch Date & Time
+     * Total System Debits vs Total System Credits
+     * Discrepancy Amount (Highlight $0.00 in green; non-zero in flashing red alert)
+     * 64-character SHA-256 Batch Verification Hash (with click-to-copy button)
+     * Hangfire Execution Status badge ("Completed in 420ms").
+   - Add "Trigger Manual EOD Reconciliation" button (restricted to System Admin role).
+
+2. Hangfire Background Worker Monitor (`/src/app/admin/hangfire/page.tsx`):
+   - Embed secure iframe pointing to `.NET 10` Hangfire Dashboard endpoint (`/hangfire`).
+   - Display metrics summary bar: Enqueued Jobs, Processing Jobs, Succeeded Jobs, Failed Jobs.
+
+3. Live Audit Logs Feed with Correlation Tracking (`/src/app/audit/page.tsx`):
+   - Fetch real-time audit logs from `GET /api/v1/audit/logs`.
+   - Display data table: Timestamp, User IP, Action Performed (e.g., `ACCOUNT_HOLD_APPLIED`, `TRANSFER_INITIATED`), Entity Affected, and `X-Correlation-ID` (e.g., `corr-8f92a1b3`).
+   - Add search input allowing filtering by `X-Correlation-ID` or User ID to trace end-to-end API request lifecycles.
+
+4. Role-Based Access Control (RBAC) Hardening (`/src/components/auth/HasRole.tsx`):
+   - Create wrapper component `<HasRole roles={['SystemAdmin', 'ComplianceAuditor']}>`.
+   - Restrict sensitive actions (e.g., manual ledger adjustments, hold releases, EOD triggers) based on the user's JWT roles.
+
+5. Enterprise Theme & UX Polish:
+   - Ensure high-contrast dark/light mode switching using Tailwind `dark:` classes.
+   - Configure global Toast notification handler for background event updates and network reconnects.
+   - Add skeleton loaders for TanStack Query loading states.
+
+Verify full build (`npm run build`) and confirm all operational, compliance, and auditing workflows function flawlessly.
+================================================================================

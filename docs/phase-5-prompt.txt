@@ -1,0 +1,62 @@
+================================================================================
+PART 1: PHASE 4 VALIDATION PROMPT (Run This First Before Phase 5)
+================================================================================
+
+Please execute a validation check on PHASE 4 (Holds Engine, Dapper Queries, Redis Caching & Minimal APIs) of AegisLedger before proceeding to Phase 5.
+
+VERIFICATION CHECKS:
+1. Build Verification:
+   - Run `dotnet build AegisLedger.sln` and confirm 0 compilation errors and 0 warnings.
+
+2. Functional Integrity:
+   - Verify `ApplyHoldCommand` reduces `AvailableBalance` while keeping `LedgerBalance` intact.
+   - Verify `ReleaseHold` and `CaptureHold` lifecycle transitions function correctly.
+   - Verify Dapper queries (`GetAccountsQuery`, `GetJournalEntriesQuery`) execute high-speed raw SQL without EF Core tracking overhead.
+   - Verify Redis caching layer properly caches read responses and invalidates upon mutations.
+   - Verify Minimal API routes match Section 6 of the SRS.
+
+If any compilation error or API mapping issue exists, resolve it immediately and output the clean `dotnet build` confirmation.
+
+================================================================================
+PART 2: PHASE 5 IMPLEMENTATION PROMPT (Hangfire Workers, EOD Reconciliation & Serilog Audit)
+================================================================================
+
+We are now executing PHASE 5 of AegisLedger v1.0: Automated Hangfire Background Scheduler, End-of-Day (EOD) Ledger Reconciliation Engine with Cryptographic SHA-256 Batch Proofs, and Serilog Correlation Tracking, based on Section 3.4, Section 5, and Section 7 of the SRS.
+
+STEP-BY-STEP INSTRUCTIONS:
+
+1. Add Required Packages:
+   - `AegisLedger.Infrastructure` & `AegisLedger.Api`:
+     * `Hangfire.AspNetCore`
+     * `Hangfire.SqlServer`
+     * `Serilog.AspNetCore`
+     * `Serilog.Sinks.Console`
+     * `Serilog.Sinks.File`
+
+2. Implement EOD Ledger Reconciliation Job in `AegisLedger.Infrastructure/Jobs/EODReconciliationJob.cs`:
+   - Calculate total debits (`SUM(Amount)` where `EntryType == Debit`) and total credits (`SUM(Amount)` where `EntryType == Credit`) across all historical ledger entries using raw SQL / Dapper.
+   - Verify Solvency Invariant: `Difference = TotalDebits - TotalCredits`. Must equal `$0.00`.
+   - Generate SHA-256 Cryptographic Audit Hash: Compute `SHA256(AuditDate + TotalDebits + TotalCredits + Difference + EntryCount)` yielding a 64-character hex string (e.g., `0x8f2a991bce4718...`).
+   - Save batch execution result to `EodReconciliationBatches` table (`BatchId`, `AuditDate`, `TotalDebits`, `TotalCredits`, `Difference`, `BatchHash`, `ExecutedAtUtc`, `DurationMs`).
+   - If `Difference != 0.00m`, log a critical security alert and trigger system circuit breaker.
+
+3. Implement Expired Hold Release Background Worker in `AegisLedger.Infrastructure/Jobs/ExpiredHoldReleaseJob.cs`:
+   - Query `TransactionHolds` table for records where `Status == Active` and `DateTime.UtcNow >= ExpiresAtUtc`.
+   - Iteratively execute hold release logic, restoring `AvailableBalance` on affected accounts.
+
+4. Configure Hangfire Scheduler in `AegisLedger.Api/Program.cs`:
+   - Configure Hangfire with SQL Server backing store.
+   - Map Hangfire Dashboard route (`/hangfire`).
+   - Register Recurring Jobs:
+     * `EODReconciliationJob`: Daily at 00:00 UTC (`Cron.Daily`).
+     * `ExpiredHoldReleaseJob`: Every 5 minutes (`Cron.MinuteInterval(5)`).
+
+5. Implement Serilog Audit Trail & Correlation Tracking in `AegisLedger.Api`:
+   - Configure Serilog structured logging writing to Console and File (`logs/aegisledger-.txt`).
+   - Add Correlation ID Middleware (`X-Correlation-ID`) enriching every HTTP request and background worker log with a trace GUID (`corr-8f92a1b3`).
+
+6. Add Reconciliation Endpoint:
+   - `POST /api/v1/reconciliation/eod` -> Triggers immediate manual run of `EODReconciliationJob` via Hangfire `IBackgroundJobClient`.
+
+7. Build Check:
+   - Run `dotnet build AegisLedger.sln` and ensure zero compilation errors.

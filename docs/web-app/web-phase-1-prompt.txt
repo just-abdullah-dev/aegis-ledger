@@ -1,0 +1,48 @@
+================================================================================
+AEGISLEDGER WEB PORTAL - PHASE 1 PROMPT
+FOUNDATION, AUTH INTEGRATION & CORE LEDGER DASHBOARD
+================================================================================
+
+[STEP 1: PRE-IMPLEMENTATION VALIDATION CHECK]
+Before writing Phase 1 code, execute the following verification steps:
+1. Verify the Next.js prototype folder (`aegisledger-pt` or current web root) exists and contains `package.json`.
+2. Ensure required dependencies are installed:
+   - `axios`, `@tanstack/react-query`, `zustand`, `lucide-react`, `recharts`, `clsx`, `tailwind-merge`.
+3. Check connectivity to the .NET 10 backend API running at `http://localhost:5000` or `https://localhost:5001`.
+4. Validate that .NET 10 Auth endpoints (`/api/v1/auth/login`, `/api/v1/auth/refresh`) and Account endpoints (`/api/v1/accounts`) return valid JSON schema responses.
+
+
+[STEP 2: PHASE 1 IMPLEMENTATION TASKS]
+Proceed with Phase 1 integration connecting the Next.js Web UI prototype to the .NET 10 Backend:
+
+1. API Client Infrastructure (`/src/lib/api-client.ts`):
+   - Configure a centralized Axios instance with base URL `process.env.NEXT_PUBLIC_API_URL`.
+   - Add Request Interceptor: Automatically inject `Authorization: Bearer <token>` from Zustand auth store.
+   - Add Response Interceptor: Intercept 401 Unauthorized responses, trigger automatic refresh token flow via `/api/v1/auth/refresh`, retry failed requests, or redirect to `/login` if refresh fails.
+   - Parse RFC 7807 `ProblemDetails` error responses into structured Toast UI notifications.
+
+2. State Management (`/src/store/useAuthStore.ts` & `/src/store/useLedgerStore.ts`):
+   - Implement Zustand `useAuthStore` holding `user`, `accessToken`, `refreshToken`, `roles` (`BankTeller`, `ComplianceAuditor`, `SystemAdmin`), and `login`/`logout` actions.
+   - Implement `useLedgerStore` managing active currency filter (`USD`, `EUR`, `PKR`), search queries, and selected account focus.
+
+3. Authentication & Login Screen (`/src/app/login/page.tsx`):
+   - Connect prototype login form to `.NET 10` `POST /api/v1/auth/login`.
+   - Store tokens securely in HttpOnly cookies / memory state.
+   - Support Quick User Persona Switcher in development ("Compliance Auditor", "Bank Teller", "System Admin").
+
+4. Dashboard Overview & Solvency Banner (`/src/app/dashboard/page.tsx`):
+   - Replace prototype static data with TanStack Query `useQuery` hooks calling `GET /api/v1/ledger/summary`.
+   - Bind metric cards:
+     * Total System Deposits ($12,450,890.00)
+     * Ledger Book Balance vs. Available Liquidity
+     * Active Account Holds Amount ($340,660.00)
+     * 24h Transaction Throughput & Success Rate
+   - Bind System Solvency Banner: Render green indicator if `SUM(Debits) == SUM(Credits)` (net variance $0.00) or red alert banner if variance detected.
+
+5. Chart of Accounts Table Integration (`/src/app/accounts/page.tsx`):
+   - Fetch real account records from `GET /api/v1/accounts`.
+   - Render columns: Account #, Owner, Account Type (Checking, Savings, Escrow, System), Ledger Balance, Available Liquidity, Status (Active/Frozen), and `RowVersion` concurrency tag (e.g., `0x00000000000007D4`).
+   - Add client-side filtering by Account Type and Currency.
+
+Verify that `npm run build` or `npm run dev` compiles cleanly with zero TypeScript errors.
+================================================================================

@@ -1,0 +1,51 @@
+================================================================================
+AEGISLEDGER MOBILE APP - PHASE 3 PROMPT: NOTIFICATIONS, SECURITY & RELEASE
+================================================================================
+
+[STEP 1: PREVIOUS PHASE VALIDATION]
+Before starting Phase 3, verify Phase 2 features:
+1. Verify P2P transfer execution attaches unique `X-Idempotency-Key` HTTP headers.
+2. Verify transfer validation blocks amounts exceeding Available Liquidity.
+3. Confirm Account Holds view accurately lists active holds and live expiry countdowns.
+
+--------------------------------------------------------------------------------
+
+[STEP 2: PHASE 3 IMPLEMENTATION PROMPT]
+
+We are completing Phase 3 of AegisLedger Mobile App, focusing on Real-Time Push Notifications, Security Hardening (Step-up Biometrics), Network Resilience Queue, and Production App Store packaging.
+
+REQUIREMENTS & STEPS:
+
+1. Real-Time Push Notifications Integration:
+   - Integrate `expo-notifications` / Firebase Cloud Messaging (FCM).
+   - Request user push permissions on initial dashboard mount.
+   - Register push token with backend endpoint `POST /api/v1/notifications/register-device`.
+   - Handle background & foreground push handlers for banking events:
+     * "Money Received": Green notification for incoming credits.
+     * "Account Hold Placed": Amber alert when compliance or card pre-auth places a hold.
+     * "Reconciliation Complete": Daily EOD status alert.
+
+2. Step-Up Security & High-Value Transaction Authorization:
+   - Define high-value threshold (e.g., transfers >= $1,000.00).
+   - Implement `StepUpBiometricPrompt.tsx`:
+     * Automatically trigger biometric authentication (FaceID / Fingerprint) before executing any transfer exceeding the threshold.
+     * Fallback to PIN / Master Password prompt if biometrics fail.
+
+3. Offline Resilience & Network Handling:
+   - Integrate `@react-native-community/netinfo`.
+   - Render a sticky top banner when offline: "Offline Mode - Transactions Disabled".
+   - Implement retry interceptor with exponential backoff for GET requests using TanStack Query `retry` configuration.
+
+4. Production Packaging & Release Engineering:
+   - Configure `app.json`:
+     * Set bundle identifiers (`com.aegisledger.mobile`).
+     * Configure Camera, Biometrics (Face ID usage description), and Push Notification permissions.
+     * Configure Android App Icon, Adaptive Icon, and iOS Splash Screen.
+   - Build production app bundle scripts:
+     * Android APK / AAB: `npx eas build --platform android`.
+     * iOS IPA: `npx eas build --platform ios`.
+
+5. Final Integration Verification:
+   - Execute full end-to-end test flow on mobile simulator/device:
+     * App launch -> Biometric Unlock -> Wallet View -> P2P Transfer with Idempotency Key -> Push Notification Trigger -> Account Hold Inspection.
+   - Ensure clean build output and zero console warnings.

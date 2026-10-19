@@ -1,0 +1,65 @@
+================================================================================
+PART 1: PHASE 5 VALIDATION PROMPT (Run This First Before Phase 6)
+================================================================================
+
+Please execute a validation check on PHASE 5 (Hangfire Workers, EOD Reconciliation & Serilog Audit) of AegisLedger before proceeding to Phase 6.
+
+VERIFICATION CHECKS:
+1. Build Verification:
+   - Run `dotnet build AegisLedger.sln` and confirm 0 compilation errors and 0 warnings.
+
+2. Hangfire & Audit Verification:
+   - Verify `EODReconciliationJob` computes system-wide debits vs credits and generates a valid 64-character SHA-256 batch hash.
+   - Verify `ExpiredHoldReleaseJob` accurately identifies and releases holds past `ExpiresAtUtc`.
+   - Verify Hangfire SQL Server storage and Dashboard mapping at `/hangfire`.
+   - Verify Serilog enriches all logs with `X-Correlation-ID`.
+
+If any build error or job registration issue is detected, resolve it immediately and output the clean `dotnet build` confirmation.
+
+================================================================================
+PART 2: PHASE 6 IMPLEMENTATION PROMPT (JWT Auth, Integration Tests, Polly, Docker & CI/CD)
+================================================================================
+
+We are now executing PHASE 6 of AegisLedger v1.0: ASP.NET Core Identity & JWT Authentication, Automated xUnit Integration Testing, Polly Resilience Policies, Docker Compose Orchestration, and GitHub Actions CI/CD Deployment, based on Section 3.5, Section 7, Section 8, and OpenAPI specifications of the SRS.
+
+STEP-BY-STEP INSTRUCTIONS:
+
+1. Implement Identity, JWT Auth & RBAC in `AegisLedger.Api`:
+   - Configure ASP.NET Core Identity with SQL Server backing.
+   - Implement JWT Bearer Token Generator & Auth Endpoints:
+     * `POST /api/v1/auth/token` -> Accepts username/password, returns JWT Access Token (15-min TTL) and Refresh Token (stored in Redis).
+     * `POST /api/v1/auth/refresh` -> Rotates refresh token and returns new JWT.
+   - Configure Roles: `ComplianceAuditor`, `BankTeller`, `Customer`.
+   - Apply `[Authorize(Roles = "...")]` policies to sensitive endpoints (e.g., EOD Reconciliation requires `ComplianceAuditor`).
+
+2. Configure OpenAPI / Swagger Documentation in `AegisLedger.Api`:
+   - Enable Swagger / OpenAPI with JWT Bearer security definition so endpoints can be tested interactively with Bearer authorization.
+
+3. Implement Polly Resilience Policies in `AegisLedger.Infrastructure`:
+   - Add `Microsoft.Extensions.Http.Polly`.
+   - Configure `IAsyncPolicy` for database / Redis transient fault recovery:
+     * Retry Policy: 3 attempts with Exponential Backoff (2s, 4s, 8s).
+     * Circuit Breaker Policy: Breaks circuit for 30 seconds if 5 consecutive failures occur.
+
+4. Implement xUnit Integration Test Suite in `tests/AegisLedger.Tests.Integration/`:
+   - Add package `Microsoft.AspNetCore.Mvc.Testing`.
+   - Create `CustomWebApplicationFactory<Program>` setting up in-memory / SQL test database.
+   - Write integration tests:
+     * `PostTransaction_ShouldMaintainDoubleEntryBalance_AndReturn201Created()`
+     * `DuplicateIdempotencyKey_ShouldReturnCachedResponse()`
+     * `ConcurrentTransfers_ShouldHandleOptimisticConcurrency_WithRowVersion()`
+
+5. Create Production Docker Orchestration in `/docker-compose.yml`:
+   - Service 1: `aegisledger.api` (.NET 10 Web API on port 5000/5001).
+   - Service 2: `sqlserver` (SQL Server 2022 on port 1433 with sa password).
+   - Service 3: `redis` (Redis 7 on port 6379).
+   - Health checks and dependency order (`depends_on`).
+
+6. Create GitHub Actions CI/CD Pipeline in `/.github/workflows/ci-cd.yml`:
+   - Triggers on `push` and `pull_request` to `main`.
+   - Steps: Checkout, Setup .NET 10, Restore, Build (`dotnet build`), Run Integration Tests (`dotnet test`), Build Docker Image.
+
+7. Final Solution Build & Test Run:
+   - Run `dotnet build AegisLedger.sln`
+   - Run `dotnet test AegisLedger.sln`
+   - Ensure 100% build success and passing test suite.

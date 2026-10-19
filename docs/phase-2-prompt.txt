@@ -1,0 +1,52 @@
+We are now moving to PHASE 2: Database Infrastructure & Data Access Layer for AegisLedger v1.0, based on Section 2.1, Section 5, and Section 8 of the Software Requirements Specification (SRS).
+
+CONTEXT & GOAL:
+In Phase 1, we built the Domain Core. In Phase 2, we will configure the Infrastructure layer (`AegisLedger.Infrastructure`) using an EF Core Code-First + Dapper hybrid data access architecture backed by SQL Server 2022.
+
+PLEASE EXECUTE THE FOLLOWING STEPS FOR PHASE 2:
+
+1. Add Required NuGet Packages to Projects:
+   - `AegisLedger.Infrastructure`:
+     * Microsoft.EntityFrameworkCore.SqlServer
+     * Microsoft.EntityFrameworkCore.Tools
+     * Dapper
+     * Microsoft.Data.SqlClient
+   - `AegisLedger.Application`:
+     * Microsoft.EntityFrameworkCore (for IApplicationDbContext interface)
+
+2. Create Data Access Interfaces in `AegisLedger.Application/Common/Interfaces/`:
+   - `IApplicationDbContext`: Exposes `DbSet<Account>`, `DbSet<Transaction>`, `DbSet<LedgerEntry>`, `DbSet<TransactionHold>`, and `Task<int> SaveChangesAsync(CancellationToken cancellationToken)`.
+   - `ISqlConnectionFactory`: Exposes `IDbConnection CreateConnection()` for raw Dapper queries.
+
+3. Create Entity Configurations in `AegisLedger.Infrastructure/Persistence/Configurations/`:
+   - `AccountConfiguration`:
+     * Set Primary Key `AccountId` (GUID).
+     * Configure `AccountNumber` as `NVARCHAR(20)` with UNIQUE constraint.
+     * Configure `LedgerBalance` and `ActiveHoldsSum` with precision `DECIMAL(18, 4)`.
+     * Ignore computed property `AvailableBalance`.
+     * Configure `RowVersion` as `IsRowVersion()` / `.IsConcurrencyToken()` for optimistic concurrency.
+   - `TransactionConfiguration`:
+     * Set Primary Key `TransactionId` (GUID).
+     * Configure `ReferenceNumber` as `NVARCHAR(50)` UNIQUE and `IdempotencyKey` as `NVARCHAR(100)` UNIQUE.
+     * Configure index on `CreatedAtUtc`.
+   - `LedgerEntryConfiguration`:
+     * Set Foreign Keys to `Transaction` and `Account`.
+     * Configure clustered/composite index on `(AccountId, CreatedAtUtc)`.
+     * Configure precision `DECIMAL(18, 4)`.
+   - `TransactionHoldConfiguration`:
+     * Set Foreign Key to `Account`.
+     * Configure non-clustered index on `(Status, ExpiresAtUtc)` for automated background worker query optimization.
+
+4. Implement DbContext & Connection Factory in `AegisLedger.Infrastructure/Persistence/`:
+   - Implement `AegisLedgerDbContext : DbContext, IApplicationDbContext`.
+   - Implement `SqlConnectionFactory : ISqlConnectionFactory`.
+
+5. Configure Dependency Injection & AppSettings:
+   - Create `DependencyInjection.cs` extension method in `AegisLedger.Infrastructure` to register `AegisLedgerDbContext` and `ISqlConnectionFactory`.
+   - Update `AegisLedger.Api/appsettings.json` with SQL Server connection string (`DefaultConnection`: "Server=localhost;Database=AegisLedgerDb;Trusted_Connection=True;TrustServerCertificate=True;").
+   - Wire `AddInfrastructure(builder.Configuration)` inside `AegisLedger.Api/Program.cs`.
+
+6. Run Initial EF Core Build Check:
+   - Execute `dotnet build AegisLedger.sln` to confirm zero compilation errors across all projects.
+
+Please generate and write out the complete C# code for Phase 2.

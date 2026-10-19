@@ -1,0 +1,45 @@
+================================================================================
+AEGISLEDGER WEB PORTAL - PHASE 2 PROMPT
+OPERATIONAL WORKFLOWS, DOUBLE-ENTRY JOURNAL & HOLDS MANAGEMENT
+================================================================================
+
+[STEP 1: PRE-IMPLEMENTATION VALIDATION CHECK]
+Before executing Phase 2, verify Phase 1 completion:
+1. Confirm JWT login, session storage, and token refresh are functioning smoothly.
+2. Verify Dashboard metric cards and Chart of Accounts table pull real data from `.NET 10` Web API endpoints.
+3. Confirm Axios request interceptor injects Bearer authorization headers properly.
+
+
+[STEP 2: PHASE 2 IMPLEMENTATION TASKS]
+Execute Phase 2 operational workflows and transaction integrations:
+
+1. Initiate Internal Transfer Modal (`/src/components/modals/InitiateTransferModal.tsx`):
+   - Build form with inputs: Source Account Number, Destination Account Number, Amount, Currency, Description.
+   - On Form Submit:
+     * Generate a unique UUID v4 `X-Idempotency-Key` string.
+     * Attach header `X-Idempotency-Key: <uuid>` to Axios request.
+     * Dispatch `POST /api/v1/transactions` to .NET 10 backend.
+   - Handle response: On success, invalidate TanStack Query keys `['accounts']` and `['transactions']` to trigger automatic background UI re-fetching. Show success toast with transaction reference number.
+
+2. Double-Entry Journal Entry Inspector (`/src/app/journal/page.tsx`):
+   - Connect data table to `GET /api/v1/transactions`.
+   - Render main row: Transaction Reference #, Date, Description, Total Amount, Status Badge (Posted, Pending, Reversed).
+   - Implement Expandable Row Detail: Clicking a transaction expands an inner table displaying immutable double-entry legs:
+     * Leg 1: Debit (DR) -> Account #, Amount ($100.00), Post Balance ($4,900.00)
+     * Leg 2: Credit (CR) -> Account #, Amount ($100.00), Post Balance ($5,100.00)
+     * Render visual badge: "Double-Entry Invariant Checked: Net Zero Difference ($0.00)".
+
+3. Transaction Holds Management Drawer (`/src/components/drawers/AccountHoldsDrawer.tsx`):
+   - Connect to `GET /api/v1/holds?accountId={id}`.
+   - Display active holds table: Hold ID, Amount, Reason (CardAuthPreCheck, AmlFraudReview, ChequeClearance, EscrowMilestoneLock), Expiry Countdown Timer, Status (Active, Released, Captured).
+   - Action Buttons:
+     * "Apply Hold": Modal collecting Amount, Reason, TTL (hours/days), calling `POST /api/v1/holds`.
+     * "Release Hold": Button calling `PUT /api/v1/holds/{id}/release`.
+     * "Capture Hold": Button calling `PUT /api/v1/holds/{id}/capture` (converts hold into posted ledger debit).
+
+4. Dapper Report & Trial Balance Exporter (`/src/components/reports/TrialBalanceExporter.tsx`):
+   - Add button calling `.NET 10` fast Dapper endpoint `GET /api/v1/reports/trial-balance?format=csv`.
+   - Trigger direct browser file download for `AegisLedger_TrialBalance_{Date}.csv`.
+
+Confirm clean compilation (`npm run build`) and test that making a transfer updates account balances dynamically without full page reloads.
+================================================================================

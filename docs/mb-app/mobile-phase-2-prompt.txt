@@ -1,0 +1,54 @@
+================================================================================
+AEGISLEDGER MOBILE APP - PHASE 2 PROMPT: TRANSFERS, IDEMPOTENCY & HOLDS
+================================================================================
+
+[STEP 1: PREVIOUS PHASE VALIDATION]
+Before starting Phase 2, verify Phase 1 features:
+1. Confirm JWT tokens are correctly persisted in `SecureStore` and attached to API requests.
+2. Confirm `DashboardScreen` accurately displays Ledger Balance vs. Available Balance.
+3. Test biometric unlock functionality on app resume.
+
+--------------------------------------------------------------------------------
+
+[STEP 2: PHASE 2 IMPLEMENTATION PROMPT]
+
+We are extending AegisLedger Mobile App to Phase 2, implementing Instant P2P Transfers with client-generated Idempotency protection, QR Code account scanning, and Active Holds Management.
+
+REQUIREMENTS & STEPS:
+
+1. Instant P2P Transfer Engine (`TransferScreen.tsx`):
+   - Input Fields:
+     * Recipient Account Number (with option to open QR Code Scanner using `expo-camera`).
+     * Transfer Amount (with dynamic validation checking `Amount <= AvailableBalance`).
+     * Description / Reference Note.
+   - Client-Side Idempotency Header Engine:
+     * Import `uuid` library (`uuidv4()`).
+     * Before dispatching `POST /api/v1/transactions/transfer`, auto-generate a unique `X-Idempotency-Key` header (e.g., `X-Idempotency-Key: 9b1deb4d-3b7d-4bad-9bd2-2ca771600160`).
+     * Store the key in local async storage during submission so retries reuse the EXACT same key.
+   - Confirmation Modal (`TransferConfirmationModal.tsx`):
+     * Summary of Sender Account, Receiver Account, Transfer Amount, Estimated Fee, and New Available Balance.
+     * Slider or "Confirm & Payout" button.
+
+2. QR Code Scanner & Generator:
+   - Implement `AccountQrModal.tsx`:
+     * Generates a QR Code containing the customer's Account Number using `react-native-qrcode-svg`.
+   - Implement `QrScanScreen.tsx`:
+     * Camera view using `expo-camera` to scan account QR codes and auto-fill the transfer destination input.
+
+3. Account Holds & Escrow Management View (`HoldsScreen.tsx`):
+   - Tab 1: **Active Holds**:
+     * List view of ring-fenced funds.
+     * Displays Hold ID, Amount ($), Reason Badge (`CardAuthPreCheck`, `AmlFraudReview`, `ChequeClearance`, `EscrowMilestoneLock`), and Expiration Countdown (e.g., "Expires in 04:12:30").
+   - Tab 2: **Hold History** (Released vs Captured holds).
+   - Information callout banner explaining: "Held funds are temporarily deducted from Available Liquidity while remaining on your Ledger Balance."
+
+4. Transaction History & Digital Receipts (`TransactionHistoryScreen.tsx`):
+   - Searchable and filterable transaction feed.
+   - Individual transaction detail drawer showing:
+     * Reference Number, Timestamp, Status Badge (Posted / Pending / Failed).
+     * Journal Entry breakdown showing Debit (DR) and Credit (CR) legs.
+     * "Export Receipt" button generating a formatted PNG/PDF receipt shareable via native Share API (`react-native-share`).
+
+5. Build Verification:
+   - Confirm zero TypeScript errors.
+   - Test transfer workflow: Verify that submitting a transfer includes `X-Idempotency-Key` and updates Available Balance dynamically upon API response.

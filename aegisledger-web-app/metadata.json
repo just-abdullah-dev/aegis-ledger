@@ -1,0 +1,6 @@
+{
+  "name": "AegisLedger - Enterprise Core Banking & Double-Entry Ledger",
+  "description": "High-density enterprise core banking and double-entry ledger portal with immutable journal entries, transaction hold management, EOD reconciliation, and multi-currency support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

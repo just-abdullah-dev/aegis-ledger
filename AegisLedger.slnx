@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AegisLedger.Api/AegisLedger.Api.csproj" />
+    <Project Path="src/AegisLedger.Application/AegisLedger.Application.csproj" />
+    <Project Path="src/AegisLedger.Domain/AegisLedger.Domain.csproj" />
+    <Project Path="src/AegisLedger.Infrastructure/AegisLedger.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AegisLedger.Domain.Tests/AegisLedger.Domain.Tests.csproj" />
+  </Folder>
+</Solution>

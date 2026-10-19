@@ -1,0 +1,71 @@
+================================================================================
+PART 1: PHASE 2 VALIDATION PROMPT (Run This First Before Phase 3)
+================================================================================
+
+Please execute a validation check on PHASE 2 (Database Infrastructure & EF Core / Dapper Setup) of AegisLedger before proceeding to Phase 3.
+
+VERIFICATION CHECKS:
+1. Build Verification:
+   - Run `dotnet build AegisLedger.sln` and ensure zero compilation errors and zero warnings.
+
+2. Infrastructure & Data Access Integrity:
+   - Verify `AegisLedgerDbContext` implements `IApplicationDbContext` and exposes DbSets for `Account`, `Transaction`, `LedgerEntry`, and `TransactionHold`.
+   - Verify `SqlConnectionFactory` implements `ISqlConnectionFactory` for Dapper raw queries.
+   - Verify entity configurations in `AegisLedger.Infrastructure/Persistence/Configurations/`:
+     * `Account`: Decimal precision (18,4), `RowVersion` optimistic concurrency token (`IsRowVersion()`), unique `AccountNumber`.
+     * `Transaction`: Unique `ReferenceNumber`, unique `IdempotencyKey`.
+     * `LedgerEntry`: Clustered/composite index on `(AccountId, CreatedAtUtc)`.
+     * `TransactionHold`: Non-clustered index on `(Status, ExpiresAtUtc)`.
+   - Verify `DependencyInjection.cs` in Infrastructure registers `AegisLedgerDbContext` and `ISqlConnectionFactory`.
+   - Verify `appsettings.json` connection string and `Program.cs` DI registration.
+
+If any build error, missing configuration, or dependency flaw is detected, fix it immediately and output the clean `dotnet build` result.
+
+================================================================================
+PART 2: PHASE 3 IMPLEMENTATION PROMPT (CQRS, MediatR, FluentValidation & Idempotency)
+================================================================================
+
+We are now executing PHASE 3 of AegisLedger v1.0: Double-Entry Transaction Engine, CQRS with MediatR, FluentValidation Pipelines, and Redis Idempotency Middleware, based on Section 3.2, Section 6, and Section 8 of the SRS.
+
+STEP-BY-STEP INSTRUCTIONS:
+
+1. Add Required Packages:
+   - `AegisLedger.Application`:
+     * `MediatR`
+     * `FluentValidation`
+     * `FluentValidation.DependencyInjectionExtensions`
+   - `AegisLedger.Api`:
+     * `Microsoft.Extensions.Caching.StackExchangeRedis`
+
+2. Implement CQRS Commands & Handlers in `AegisLedger.Application/Transactions/Commands/`:
+   - `PostTransactionCommand`:
+     * Properties: `SourceAccountId` (Guid), `DestinationAccountId` (Guid), `Amount` (decimal), `Description` (string), `IdempotencyKey` (string?).
+     * Return Type: `TransactionResponseDto` (`TransactionId`, `ReferenceNumber`, `Status`, `NetDifference`).
+   - `PostTransactionCommandHandler`:
+     * Execute within EF Core `IDbContextTransaction` with `IsolationLevel.Serializable`.
+     * Fetch Source and Destination accounts from `IApplicationDbContext`.
+     * Call `sourceAccount.Debit(amount)` and `destAccount.Credit(amount)`.
+     * Create `Transaction` and matching `LedgerEntry` records (Debit leg for Source, Credit leg for Destination).
+     * Enforce Domain Invariant: Call `transaction.Post()` to verify `SUM(Debits) == SUM(Credits)`.
+     * Save changes and commit transaction. Catch `DbUpdateConcurrencyException` and rethrow as a domain concurrency exception if `RowVersion` mismatches.
+
+3. Implement FluentValidation Pipeline Behavior:
+   - Create `ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>` in `AegisLedger.Application/Common/Behaviors/`.
+   - Implement `PostTransactionCommandValidator`:
+     * Amount must be > $0.00.
+     * SourceAccountId != DestinationAccountId.
+     * Description must not be empty.
+
+4. Implement Custom Redis Idempotency Middleware in `AegisLedger.Api/Middleware/IdempotencyMiddleware.cs`:
+   - Intercept HTTP requests containing `X-Idempotency-Key` header.
+   - Check Redis cache (`IDistributedCache`) for existing response payload.
+   - If key exists: Return cached 200/201 JSON response directly without re-executing command.
+   - If key does not exist: Process request, intercept response body, store in Redis with 24-hour TTL, and complete response.
+
+5. Implement Global Exception Handling Middleware in `AegisLedger.Api/Middleware/ExceptionHandlingMiddleware.cs`:
+   - Catch domain exceptions (`InvalidOperationException`, `ArgumentException`, `DbUpdateConcurrencyException`).
+   - Format error response adhering strictly to the RFC 7807 `ProblemDetails` standard (type, title, status, detail, instance, timestamp).
+
+6. Build Check & Test Execution:
+   - Register MediatR, FluentValidation, and Redis caching in `DependencyInjection.cs` and `Program.cs`.
+   - Run `dotnet build AegisLedger.sln` to confirm 0 compilation errors.

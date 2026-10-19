@@ -1,0 +1,70 @@
+================================================================================
+AEGISLEDGER v2.6 - ENTERPRISE CORE BANKING WEB PORTAL
+SOFTWARE REQUIREMENTS SPECIFICATION (SRS)
+================================================================================
+
+1. SYSTEM OVERVIEW & VISION
+--------------------------------------------------------------------------------
+The AegisLedger Web Portal is an enterprise-grade banking operations, compliance,
+and treasury management portal built with Next.js 14+ (App Router), TypeScript,
+Tailwind CSS, Shadcn UI, and TanStack Query. It connects directly to the
+AegisLedger .NET 10 Clean Architecture REST Web API, providing real-time visibility
+into general ledger balances, double-entry journal entries, account holds, and
+end-of-day (EOD) audit reconciliation.
+
+Target Personas:
+1. Bank Teller: Executes customer account management, initiates internal transfers,
+   applies/releases temporary account holds.
+2. Compliance Auditor: Inspects immutable double-entry journal splits, reviews
+   audit logs, verifies EOD reconciliation batch SHA-256 hashes.
+3. System Admin / Treasury Ops: Monitors system solvency status, manages Chart of
+   Accounts (COA), oversees Hangfire background jobs, and views liquidity metrics.
+
+Target Tech Stack:
+- Framework: Next.js 14+ (App Router, Server & Client Components)
+- Language: TypeScript 5.x (Strict Type Safety matching .NET DTOs)
+- UI Library: Shadcn UI, Tailwind CSS, Lucide Icons, Radix Primitives
+- Data Fetching & Caching: TanStack Query (React Query) v5
+- State Management: Zustand (Auth session, active account context, global notifications)
+- HTTP Client: Axios with Request/Response Interceptors (JWT Refresh, Idempotency, RFC 7807 Error handling)
+- Charts & Visualization: Recharts (Debit vs. Credit flow, EOD drift trend lines)
+
+
+2. ARCHITECTURAL & API INTEGRATION MATRIX
+--------------------------------------------------------------------------------
+The Web Portal integrates directly with the .NET 10 Web API endpoints:
+
+Frontend Domain        .NET 10 Backend API Endpoint        HTTP Method   Key DTO / Payload
+---------------------  ----------------------------------  -----------   ---------------------------------------
+Auth & Session         /api/v1/auth/login                  POST          LoginRequest -> JwtResponse, RefreshToken
+Accounts & COA         /api/v1/accounts                    GET/POST      AccountResponse, CreateAccountCommand
+Transactions & Journal /api/v1/transactions               GET/POST      PostTransactionCommand (X-Idempotency-Key)
+Transaction Holds      /api/v1/holds                       GET/POST/PUT  ApplyHoldCommand, ReleaseHoldCommand
+EOD Reconciliation     /api/v1/reconciliation/batches      GET           EodBatchSummaryResponse
+Audit Logs             /api/v1/audit/logs                  GET           AuditLogFeedResponse (Correlation ID)
+
+
+3. THREE-PHASE IMPLEMENTATION ROADMAP
+--------------------------------------------------------------------------------
+
+PHASE 1: Foundation, Auth Integration & Core Ledger Dashboard
+- Wire Axios API client with automatic JWT bearer injection and refresh token rotation.
+- Integrate Zustand `useAuthStore` for user session management and RBAC.
+- Connect Dashboard Overview metrics (Total Deposits, Book Balance vs. Available Liquidity) to real .NET 10 endpoints.
+- Render live System Solvency Status banner (`SUM(Debits) == SUM(Credits)` check).
+- Connect Chart of Accounts (COA) data table with optimistic `RowVersion` concurrency display.
+
+PHASE 2: Operational Workflows, Double-Entry Journal & Holds Management
+- Implement "Initiate Internal Transfer" modal with automatic UUID `X-Idempotency-Key` header generation.
+- Build Double-Entry Journal Entry Inspector showing detailed Debit (DR) / Credit (CR) entry splits.
+- Wire Account Holds drawer: Apply Hold, Release Hold, Capture Hold with real-time balance updates.
+- Connect TanStack Query mutation invalidation so transfers instantly refresh ledger table balances.
+- Add Dapper report exporter integration (CSV / PDF Trial Balance download).
+
+PHASE 3: EOD Reconciliation, Hangfire Monitor, Audit Logs & Enterprise Polish
+- Connect EOD Reconciliation view to fetch daily balance verification batches, SHA-256 hashes, and variance checks.
+- Embed Hangfire Background Worker status monitor / dashboard iframe.
+- Build Live Audit Logs feed supporting filtering by `X-Correlation-ID`, user ID, and action type.
+- Implement Role-Based Access Control (RBAC) component wrappers (`<HasRole role="ComplianceAuditor">`).
+- Apply enterprise theme polish, dark/light mode toggle, and comprehensive Toast notifications for RFC 7807 API errors.
+================================================================================

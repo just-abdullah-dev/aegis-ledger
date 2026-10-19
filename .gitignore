@@ -1,0 +1,113 @@
+# ==============================================================================
+# AegisLedger Master .gitignore
+# Covers: Root Solution, .NET 10 Backend, Web App (Vite/React), Mobile App (Expo/RN)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. .NET / C# Ecosystem
+# ------------------------------------------------------------------------------
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+GeneratedFiles/
+TestResults/
+[Cc]overage/
+*.coverage
+*.coveragexml
+*.nupkg
+*.snupkg
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+appsettings.Production.json
+
+# Local Databases (SQLite / Test DBs)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ------------------------------------------------------------------------------
+# 2. Web Application (Vite / React / Next.js / Node.js)
+# ------------------------------------------------------------------------------
+node_modules/
+dist/
+build/
+.next/
+out/
+.turbo/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ------------------------------------------------------------------------------
+# 3. Mobile Application (React Native / Expo / Metro / Native)
+# ------------------------------------------------------------------------------
+.expo/
+.expo-shared/
+web-build/
+expo-env.d.ts
+.metro-health-check*
+.kotlin/
+*.tsbuildinfo
+
+# Native generated folders
+ios/
+android/
+/ios
+/android
+
+# Certificates, keys, keystores & provisioning
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.keystore
+*.orig.*
+
+# ------------------------------------------------------------------------------
+# 4. Environment & Secrets
+# ------------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.secret
+!.env.example
+
+# ------------------------------------------------------------------------------
+# 5. IDEs, Editors & Tooling
+# ------------------------------------------------------------------------------
+.vs/
+.idea/
+.vscode/
+.ionide/
+.claude/
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------------------------
+# 6. Operating System Artifacts
+# ------------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+ehthumbs_vista.db
+[Tt]humbs.db

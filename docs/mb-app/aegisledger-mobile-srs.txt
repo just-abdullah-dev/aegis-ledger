@@ -1,0 +1,66 @@
+================================================================================
+AEGISLEDGER MOBILE WALLET - SOFTWARE REQUIREMENTS SPECIFICATION (SRS)
+Target Platform: React Native (iOS & Android) | Framework: React Native / Expo
+Backend Integration: AegisLedger .NET 10 Core Banking Web API
+================================================================================
+
+1. EXECUTIVE SUMMARY & MOBILE VISION
+--------------------------------------------------------------------------------
+AegisLedger Mobile is a high-security, real-time enterprise wallet application designed for retail and business banking customers. It connects directly to the AegisLedger .NET 10 backend API, providing transparent access to double-entry ledger balances, available liquidity, active account holds, and instant P2P transfers with mandatory client-side idempotency protection.
+
+2. TECHNOLOGY STACK & ARCHITECTURE
+--------------------------------------------------------------------------------
+- Core Framework: React Native with TypeScript (Expo SDK 51+ or React Native CLI)
+- State Management: Zustand (Global Auth & Account State) + TanStack Query / React Query (Server State & Caching)
+- Navigation: React Navigation v6 (Native Stack + Bottom Tabs)
+- Security & Storage: Expo SecureStore / React Native Keychain (JWT & Refresh Tokens), Expo LocalAuthentication (FaceID / TouchID / Fingerprint)
+- Networking: Axios with Custom Interceptors (Automated JWT Header Injection, Token Refresh Rotation, UUID v4 X-Idempotency-Key Headers)
+- UI Components: React Native Paper / Tailwind (NativeWind) + Lucide React Native Icons
+
+3. THREE-PHASE IMPLEMENTATION ROADMAP
+--------------------------------------------------------------------------------
+
+PHASE 1: MOBILE ARCHITECTURE, BIOMETRIC AUTH & WALLET CORE
+- App initialization & Clean Architecture directory structure (screens, components, services, hooks, store).
+- Secure Authentication:
+  * Login / Refresh Token auth flow integrating with .NET ASP.NET Core Identity.
+  * Encrypted storage of Access JWT & Refresh Tokens in iOS Keychain / Android Keystore.
+  * Local Biometric Auth (FaceID / Fingerprint) prompt on app open and resume.
+- Account Wallet Dashboard:
+  * Display primary Customer Account Number, Account Type (Checking / Savings / Escrow).
+  * High-visibility distinction between Book Balance ($12,450,890.00) and Available Liquidity ($12,110,230.00).
+  * Active Account Hold summary card highlighting total ring-fenced funds ($340,660.00).
+  * Real-time pull-to-refresh & auto-background refresh using React Query.
+
+PHASE 2: INSTANT P2P TRANSFERS, IDEMPOTENCY ENGINE & HOLDS MANAGEMENT
+- P2P Internal Transfer Flow:
+  * Destination Account input (or QR Code scanner for Account Number).
+  * Amount input with real-time Available Liquidity check (disallowing inputs > Available Balance).
+  * Automated Client-Side Idempotency Header: Auto-generates a unique `X-Idempotency-Key` (UUID v4) per transfer attempt to prevent double-charging on network retries.
+  * Transfer confirmation modal displaying fee breakdown and net post-balance estimate.
+- Account Holds & Escrow Management View:
+  * Tabbed view listing all Active, Released, and Captured holds.
+  * Hold metadata display: Hold ID, Reason (e.g., "AML Fraud Review", "Card Auth Pre-check"), and live expiry countdown timer.
+  * Escrow milestone tracking view for restricted third-party accounts.
+- Transaction History & Digital Receipts:
+  * Searchable list of posted journal entries (Debits in Red, Credits in Green).
+  * Downloadable/Shareable PDF/Image digital transaction receipt generator.
+
+PHASE 3: SECURITY HARDENING, REAL-TIME NOTIFICATIONS & PRODUCTION RELEASE
+- Real-Time Push Notifications:
+  * Firebase Cloud Messaging (FCM) / Expo Notifications integration.
+  * Immediate push alerts on Account Debits, Credits, Hold Placements, and Hold Expirations.
+- Security & Resilience Hardening:
+  * Step-up Biometric Confirmation required before confirming high-value payout transactions.
+  * Network Connectivity listener (NetInfo) with offline banner and request retry queue handling.
+  * Certificate Pinning & Jailbreak/Root Detection middleware.
+- Release & DevOps:
+  * App icon, splash screen, and app permissions (Camera, Biometrics, Notifications).
+  * Production build setup using Expo EAS / Fastlane for Apple App Store & Google Play Store release.
+
+4. NON-FUNCTIONAL REQUIREMENTS
+--------------------------------------------------------------------------------
+- Security: Zero plain-text token storage. All tokens encrypted in hardware-backed keystores.
+- Performance: Wallet balance screen initial render under 300ms; transfer execution payload roundtrip under 800ms.
+- Resilience: Idempotent API communication ensuring zero duplicate transfers under poor mobile network conditions.
+- UX: Clear distinction between Book Ledger Balance and Available Liquidity to avoid user confusion over held funds.

@@ -1,0 +1,57 @@
+================================================================================
+PART 1: PHASE 3 VALIDATION PROMPT (Run This First Before Phase 4)
+================================================================================
+
+Please execute a validation check on PHASE 3 (CQRS, MediatR, FluentValidation & Idempotency) of AegisLedger before proceeding to Phase 4.
+
+VERIFICATION CHECKS:
+1. Build Verification:
+   - Run `dotnet build AegisLedger.sln` and confirm 0 compilation errors and 0 warnings.
+
+2. CQRS & Pipeline Integrity:
+   - Verify `PostTransactionCommand` and `PostTransactionCommandHandler` execute inside `IDbContextTransaction` with `IsolationLevel.Serializable`.
+   - Verify `ValidationBehavior` automatically intercepts MediatR requests and enforces `PostTransactionCommandValidator`.
+   - Verify `IdempotencyMiddleware` accurately checks and sets 24-hour TTL keys in Redis using `X-Idempotency-Key`.
+   - Verify `ExceptionHandlingMiddleware` catches concurrency / balance errors and transforms them into RFC 7807 `ProblemDetails` JSON.
+
+If any build error, pipeline failure, or missing validator is found, resolve it immediately and show the clean `dotnet build` confirmation.
+
+================================================================================
+PART 2: PHASE 4 IMPLEMENTATION PROMPT (Holds Engine, Dapper Queries & Redis Caching)
+================================================================================
+
+We are now executing PHASE 4 of AegisLedger v1.0: Transaction Holds & Escrow Ring-Fencing Engine, Dapper Read-Side Query Handlers, Redis Query Caching, and Core Minimal APIs, based on Section 3.1, Section 3.3, Section 5, and Section 6 of the SRS.
+
+STEP-BY-STEP INSTRUCTIONS:
+
+1. Implement Account Hold Commands & Handlers in `AegisLedger.Application/Holds/Commands/`:
+   - `ApplyHoldCommand`:
+     * Inputs: `AccountId` (Guid), `Amount` (decimal), `Reason` (HoldReason enum), `TtlMinutes` (int).
+     * Handler: Calls `account.ApplyHold(amount, reason, TimeSpan.FromMinutes(ttlMinutes))`. Updates `ActiveHoldsSum` without changing `LedgerBalance`. Reduces `AvailableBalance`.
+   - `ReleaseHoldCommand`:
+     * Inputs: `AccountId` (Guid), `HoldId` (Guid).
+     * Handler: Calls `account.ReleaseHold(holdId)`. Restores `AvailableBalance`.
+   - `CaptureHoldCommand`:
+     * Inputs: `AccountId` (Guid), `HoldId` (Guid).
+     * Handler: Calls `account.CaptureHold(holdId)`. Deducts `Amount` from both `ActiveHoldsSum` and `LedgerBalance`.
+
+2. Implement Dapper Read-Side Query Handlers in `AegisLedger.Infrastructure/Queries/`:
+   - `GetAccountsQueryHandler`: Fast Dapper query returning all accounts with `LedgerBalance`, `ActiveHoldsSum`, `AvailableBalance`, and `RowVersion` hex string.
+   - `GetAccountByIdQueryHandler`: Dapper query returning account details and recent ledger entries.
+   - `GetJournalEntriesQueryHandler`: Dapper paginated query joining `Transactions` and `LedgerEntries` with Debit/Credit line splits.
+   - `GetActiveHoldsQueryHandler`: Dapper query returning active holds filtered by account with countdown expiry UTC timestamps.
+
+3. Implement Redis Read-Query Caching (`ICacheService`):
+   - Wrap Dapper query responses in Redis distributed cache with 60-second sliding expiration.
+   - Invalidate account list cache whenever a `PostTransactionCommand`, `ApplyHoldCommand`, `ReleaseHoldCommand`, or `CaptureHoldCommand` succeeds.
+
+4. Implement ASP.NET Core Minimal APIs / Controllers in `AegisLedger.Api/Endpoints/`:
+   - `GET /api/v1/accounts` -> Returns account list with solvency aggregates.
+   - `GET /api/v1/accounts/{id}` -> Returns account details and ledger history.
+   - `POST /api/v1/transactions/transfer` -> Accepts `X-Idempotency-Key` header, dispatches `PostTransactionCommand`.
+   - `POST /api/v1/holds/apply` -> Dispatches `ApplyHoldCommand`.
+   - `POST /api/v1/holds/{id}/release` -> Dispatches `ReleaseHoldCommand`.
+   - `POST /api/v1/holds/{id}/capture` -> Dispatches `CaptureHoldCommand`.
+
+5. Build Check:
+   - Run `dotnet build AegisLedger.sln` to ensure zero compilation errors.
