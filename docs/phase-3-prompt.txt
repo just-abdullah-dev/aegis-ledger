@@ -6,7 +6,7 @@ Please execute a validation check on PHASE 2 (Database Infrastructure & EF Core 
 
 VERIFICATION CHECKS:
 1. Build Verification:
-   - Run `dotnet build AegisLedger.sln` and ensure zero compilation errors and zero warnings.
+   - Run `dotnet build AegisLedger.slnx` and ensure zero compilation errors and zero warnings.
 
 2. Infrastructure & Data Access Integrity:
    - Verify `AegisLedgerDbContext` implements `IApplicationDbContext` and exposes DbSets for `Account`, `Transaction`, `LedgerEntry`, and `TransactionHold`.
@@ -68,4 +68,4 @@ STEP-BY-STEP INSTRUCTIONS:
 
 6. Build Check & Test Execution:
    - Register MediatR, FluentValidation, and Redis caching in `DependencyInjection.cs` and `Program.cs`.
-   - Run `dotnet build AegisLedger.sln` to confirm 0 compilation errors.
+   - Run `dotnet build AegisLedger.slnx` to confirm 0 compilation errors.

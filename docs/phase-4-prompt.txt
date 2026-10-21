@@ -6,7 +6,7 @@ Please execute a validation check on PHASE 3 (CQRS, MediatR, FluentValidation & 
 
 VERIFICATION CHECKS:
 1. Build Verification:
-   - Run `dotnet build AegisLedger.sln` and confirm 0 compilation errors and 0 warnings.
+   - Run `dotnet build AegisLedger.slnx` and confirm 0 compilation errors and 0 warnings.
 
 2. CQRS & Pipeline Integrity:
    - Verify `PostTransactionCommand` and `PostTransactionCommandHandler` execute inside `IDbContextTransaction` with `IsolationLevel.Serializable`.
@@ -54,4 +54,4 @@ STEP-BY-STEP INSTRUCTIONS:
    - `POST /api/v1/holds/{id}/capture` -> Dispatches `CaptureHoldCommand`.
 
 5. Build Check:
-   - Run `dotnet build AegisLedger.sln` to ensure zero compilation errors.
+   - Run `dotnet build AegisLedger.slnx` to ensure zero compilation errors.

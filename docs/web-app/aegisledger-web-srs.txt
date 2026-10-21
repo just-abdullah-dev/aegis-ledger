@@ -1,5 +1,5 @@
 ================================================================================
-AEGISLEDGER v2.6 - ENTERPRISE CORE BANKING WEB PORTAL
+AEGISLEDGER v1.0 - ENTERPRISE CORE BANKING WEB PORTAL
 SOFTWARE REQUIREMENTS SPECIFICATION (SRS)
 ================================================================================
 

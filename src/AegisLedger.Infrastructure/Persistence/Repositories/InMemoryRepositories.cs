@@ -20,6 +20,12 @@ public sealed class InMemoryAccountRepository : IAccountRepository
         
         var frozenAcc = SeedAccount("ACC-9902-SAV", "Helios Renewable Ventures", "Lucas Chen", AccountCategory.Customer, AccountType.Savings, 520000.00m, 0m, null);
         frozenAcc.Freeze();
+
+        // System Ledgers (Chart of Accounts - General Ledger Core)
+        SeedAccount("SYS-1010-CASH", "Federal Reserve Vault & Clearing Cash", "Aegis Central Treasury", AccountCategory.System, AccountType.Asset, 15800000.00m, 0m, null);
+        SeedAccount("SYS-2010-DEP", "Customer Deposit Liabilities (General)", "Core Banking Engine", AccountCategory.System, AccountType.Liability, 12450890.00m, 0m, null);
+        SeedAccount("SYS-3010-EQT", "Tier-1 Regulatory Paid-In Capital", "Board of Governors", AccountCategory.System, AccountType.Equity, 3000000.00m, 0m, null);
+        SeedAccount("SYS-4010-REV", "Net Interbank Settlement & Wire Fee Revenue", "Revenue Operations", AccountCategory.System, AccountType.Revenue, 349110.00m, 0m, null);
     }
 
     private static Account SeedAccount(

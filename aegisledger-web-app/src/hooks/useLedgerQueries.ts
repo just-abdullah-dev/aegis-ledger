@@ -1,5 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { accountsApi, transactionsApi, holdsApi, reportsApi, reconciliationApi, auditApi } from '../lib/api-client';
+import { 
+  accountsApi, 
+  transactionsApi, 
+  holdsApi, 
+  reportsApi, 
+  reconciliationApi, 
+  auditApi,
+  hangfireApi,
+  HangfireStats,
+  HangfireRecurringJob,
+  HangfireJob
+} from '../lib/api-client';
 import { BankAccount, Transaction, TransactionHold, HoldReason, EODBatchRecord, AuditLogEntry } from '../types/ledger';
 
 export const LEDGER_QUERY_KEYS = {
@@ -155,5 +166,56 @@ export function useAuditLogsQuery(correlationId?: string, status?: string) {
     queryFn: () => auditApi.getAuditLogs(correlationId, status),
     staleTime: 1000 * 15,
     refetchInterval: 1000 * 30,
+  });
+}
+
+export function useHangfireStatsQuery() {
+  return useQuery<HangfireStats>({
+    queryKey: ['hangfire-stats'],
+    queryFn: () => hangfireApi.getStats(),
+    staleTime: 1000 * 5,
+    refetchInterval: 1000 * 10,
+  });
+}
+
+export function useHangfireRecurringQuery() {
+  return useQuery<HangfireRecurringJob[]>({
+    queryKey: ['hangfire-recurring'],
+    queryFn: () => hangfireApi.getRecurringJobs(),
+    staleTime: 1000 * 10,
+    refetchInterval: 1000 * 15,
+  });
+}
+
+export function useHangfireSucceededJobsQuery(count: number = 20) {
+  return useQuery<HangfireJob[]>({
+    queryKey: ['hangfire-jobs-succeeded', count],
+    queryFn: () => hangfireApi.getSucceededJobs(count),
+    staleTime: 1000 * 10,
+    refetchInterval: 1000 * 15,
+  });
+}
+
+export function useHangfireProcessingJobsQuery() {
+  return useQuery<HangfireJob[]>({
+    queryKey: ['hangfire-jobs-processing'],
+    queryFn: () => hangfireApi.getProcessingJobs(),
+    staleTime: 1000 * 5,
+    refetchInterval: 1000 * 10,
+  });
+}
+
+export function useTriggerHangfireJobMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (jobId: string) => hangfireApi.triggerRecurringJob(jobId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['hangfire-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['hangfire-recurring'] });
+      queryClient.invalidateQueries({ queryKey: ['hangfire-jobs-succeeded'] });
+      queryClient.invalidateQueries({ queryKey: ['hangfire-jobs-processing'] });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation-batches'] });
+    },
   });
 }

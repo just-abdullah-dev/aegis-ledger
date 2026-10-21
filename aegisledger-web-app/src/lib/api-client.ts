@@ -1,6 +1,5 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
-import { INITIAL_ACCOUNTS, INITIAL_TRANSACTIONS, INITIAL_HOLDS, INITIAL_EOD_BATCHES, INITIAL_AUDIT_LOGS } from '../data/mockData';
-import { BankAccount, Currency, UserPersona, Transaction, TransactionHold, EODBatchRecord, AuditLogEntry } from '../types/ledger';
+import { BankAccount, AccountCategory, Currency, UserPersona, Transaction, TransactionHold, EODBatchRecord, AuditLogEntry } from '../types/ledger';
 
 export const API_BASE_URL =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
@@ -15,9 +14,27 @@ export interface ProblemDetails {
   errors?: Record<string, string[]>;
 }
 
+export function getCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(new RegExp('(^|;\\s*)(' + name + ')=([^;]*)'));
+  return match ? decodeURIComponent(match[3]) : null;
+}
+
+export function setCookie(name: string, value: string, days = 7) {
+  if (typeof document === 'undefined') return;
+  const expires = new Date(Date.now() + days * 864e5).toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+}
+
+export function deleteCookie(name: string) {
+  if (typeof document === 'undefined') return;
+  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
+}
+
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
     'X-Client-Platform': 'web-portal',
@@ -127,7 +144,7 @@ apiClient.interceptors.response.use(
     // Parse RFC 7807 ProblemDetails into standard error message
     if (error.response?.data) {
       const problem = error.response.data;
-      let msg = problem.detail || problem.title || error.message;
+      let msg = problem.detail || problem.title || (problem as any).error || error.message;
       if (problem.errors) {
         const fieldErrors = Object.entries(problem.errors)
           .map(([field, msgs]) => `${field}: ${msgs.join(', ')}`)
@@ -135,212 +152,229 @@ apiClient.interceptors.response.use(
         msg = `${msg} (${fieldErrors})`;
       }
       error.message = msg;
+    } else if (!error.response) {
+      error.message = `Cannot connect to AegisLedger Core Backend (${API_BASE_URL}). The backend service is currently offline or unreachable.`;
     }
 
     return Promise.reject(error);
   }
 );
 
-// High-Level API Methods with Intelligent Backend & Compliant Fallback
+// High-Level Authentication & Token Management with HttpOnly Cookie Support
 export const authApi = {
   async login(credentials: { emailOrId: string; password?: string; persona?: UserPersona }) {
+    const response = await apiClient.post('/api/v1/auth/login', credentials);
+    if (response.data?.accessToken) {
+      setCookie('aegis_session_active', '1', 7);
+      setCookie('aegis_user_persona', response.data.user?.persona || 'Compliance Auditor', 7);
+    }
+    return response.data;
+  },
+
+  async customerLogin(credentials: { emailOrId: string; password?: string }) {
+    const response = await apiClient.post('/api/v1/auth/customer/login', credentials);
+    if (response.data?.accessToken) {
+      setCookie('aegis_session_active', '1', 7);
+      setCookie('aegis_user_persona', 'Retail Customer', 7);
+    }
+    return response.data;
+  },
+
+  async getCurrentUser() {
     try {
-      const response = await apiClient.post('/api/v1/auth/login', credentials);
+      const response = await apiClient.get('/api/v1/auth/me');
       return response.data;
     } catch {
-      // Fallback for development if backend auth endpoint is pending
-      const persona = credentials.persona || 'Compliance Auditor';
-      return {
-        user: {
-          id: `usr-${Date.now().toString(36)}`,
-          name: credentials.emailOrId.includes('@')
-            ? credentials.emailOrId.split('@')[0].toUpperCase()
-            : 'Marcus Vance',
-          email: credentials.emailOrId.includes('@')
-            ? credentials.emailOrId
-            : 'marcus.vance@apexcapital.io',
-          persona,
-          role: persona === 'System Admin' ? 'SystemAdmin' : persona === 'Bank Teller' ? 'BankTeller' : 'ComplianceAuditor',
-        },
-        accessToken: `ey.aegis.web.${Date.now()}`,
-        refreshToken: `ey.aegis.refresh.${Date.now()}`,
-        expiresIn: 3600,
-      };
+      return null;
     }
   },
 
-  async refresh(refreshToken: string) {
+  async logout() {
+    try {
+      await apiClient.post('/api/v1/auth/logout');
+    } catch {
+      // Ignore network errors on logout
+    } finally {
+      deleteCookie('aegis_access_token');
+      deleteCookie('aegis_refresh_token');
+      deleteCookie('aegis_session_active');
+      deleteCookie('aegis_user_persona');
+      localStorage.removeItem('aegis_auth_session');
+    }
+  },
+
+  async refresh(refreshToken?: string) {
     try {
       const response = await apiClient.post('/api/v1/auth/refresh', { refreshToken });
       return response.data;
-    } catch {
-      return {
-        accessToken: `ey.aegis.web.${Date.now()}`,
-        refreshToken: `ey.aegis.refresh.${Date.now()}`,
-      };
+    } catch (err) {
+      deleteCookie('aegis_session_active');
+      throw err;
     }
   },
 };
 
+export interface CreateAccountPayload {
+  accountNumber?: string;
+  name: string;
+  owner: string;
+  category?: 'customer' | 'system';
+  type?: string;
+  currency?: string;
+  initialDeposit: number;
+  depositType?: 'ZeroBalance' | 'CashVault' | 'WireClearing' | 'ChequeDeposit' | 'InternalTransfer';
+  sourceAccountId?: string;
+  routingCode?: string;
+  description?: string;
+  taxId?: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  branchCode?: string;
+  amlRiskTier?: string;
+}
+
 export const accountsApi = {
+  async createAccount(payload: CreateAccountPayload): Promise<{ account: BankAccount; transaction?: any }> {
+    const response = await apiClient.post<any>('/api/v1/accounts', payload);
+    const rawAccount = response.data?.account || response.data;
+    const mappedAccount: BankAccount = {
+      ...rawAccount,
+      id: rawAccount.id || rawAccount.accountId,
+      category: (rawAccount.category?.toLowerCase() === 'customer' ? 'customer' : 'system') as AccountCategory,
+      ledgerBalance: Number(rawAccount.ledgerBalance) || 0,
+      availableBalance: Number(rawAccount.availableBalance) || 0,
+      status: rawAccount.status || 'Active',
+      openedAt: rawAccount.openedAt ? new Date(rawAccount.openedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      rowVersion: rawAccount.rowVersion || '0x0000000000000001',
+    };
+    return {
+      account: mappedAccount,
+      transaction: response.data?.initialFundingTransaction || response.data?.transaction,
+    };
+  },
+
+  async updateAccountStatus(accountId: string, status?: 'Active' | 'Frozen' | 'Closed'): Promise<{ id: string; status: string; accountNumber: string; name?: string }> {
+    const res = await apiClient.patch(`/api/v1/accounts/${accountId}/status`, { status });
+    return res.data;
+  },
+
   async getAccounts(): Promise<BankAccount[]> {
-    try {
-      const response = await apiClient.get<BankAccount[]>('/api/v1/accounts');
-      if (response.data && response.data.length > 0) {
-        return response.data;
-      }
-    } catch {
-      // Fall back to prototype accounts
-    }
-    return INITIAL_ACCOUNTS;
+    const response = await apiClient.get<any>('/api/v1/accounts');
+    const rawList = Array.isArray(response.data)
+      ? response.data
+      : (response.data && Array.isArray(response.data.accounts) ? response.data.accounts : []);
+    return rawList.map((a: any) => ({
+      ...a,
+      id: a.id || a.accountId,
+      category: (a.category?.toLowerCase() === 'customer' ? 'customer' : 'system') as AccountCategory,
+      ledgerBalance: Number(a.ledgerBalance) || 0,
+      availableBalance: Number(a.availableBalance) || 0,
+      status: a.status || 'Active',
+    }));
   },
 
   async getHealth() {
-    try {
-      const response = await apiClient.get('/api/v1/health');
-      return response.data;
-    } catch {
-      return {
-        system: 'AegisLedger Core Banking Engine',
-        version: '1.0.0',
-        status: 'Healthy',
-        solvencyInvariant: 'SUM(Debits) == SUM(Credits)',
-        totalBookLedgerBalance: 17355410.5,
-        totalAvailableLiquidity: 16112550.5,
-        activeSecurityHolds: 1242860.0,
-        isZeroDriftVerified: true,
-      };
-    }
+    const response = await apiClient.get('/api/v1/health');
+    return response.data;
   },
 
   async getLedgerSummary() {
-    try {
-      const response = await apiClient.get('/api/v1/ledger/summary');
-      return response.data;
-    } catch {
-      // Compute from live accounts
-      const accounts = INITIAL_ACCOUNTS;
-      const totalDeposits = accounts
-        .filter((a) => a.category === 'customer')
-        .reduce((sum, a) => sum + a.ledgerBalance, 0);
-      const totalAvailable = accounts
-        .filter((a) => a.category === 'customer')
-        .reduce((sum, a) => sum + a.availableBalance, 0);
-      const activeHolds = totalDeposits - totalAvailable;
-
-      return {
-        totalDeposits,
-        totalAvailableLiquidity: totalAvailable,
-        totalBookLedgerBalance: totalDeposits,
-        activeHoldsAmount: activeHolds,
-        txCount24h: INITIAL_TRANSACTIONS.length + 840,
-        txSuccessRate: 99.98,
-        solvencyNetVariance: 0.0,
-        isSolvent: true,
-      };
-    }
+    const response = await apiClient.get('/api/v1/ledger/summary');
+    return response.data;
   },
 };
 
 export const transactionsApi = {
   async getTransactions(): Promise<Transaction[]> {
-    try {
-      const response = await apiClient.get<any[]>('/api/v1/transactions/journal');
-      if (response.data && response.data.length > 0) {
-        return response.data.map((item: any) => ({
-          id: item.transactionId || item.id,
-          reference: item.referenceNumber || item.reference,
-          timestamp: item.timestampUtc || item.timestamp,
-          senderAccountId: item.splits?.[0]?.accountId || item.senderAccountId || '',
-          receiverAccountId: item.splits?.[1]?.accountId || item.receiverAccountId || '',
-          senderAccountNum: item.splits?.[0]?.accountNumber || item.senderAccountNum || '',
-          receiverAccountNum: item.splits?.[1]?.accountNumber || item.receiverAccountNum || '',
-          amount: item.amount,
-          status: (item.status === 'SUCCESS' || item.status === 'Posted') ? 'Posted' : item.status,
-          idempotencyKey: item.idempotencyKey || 'uuid-fallback',
-          description: item.description,
-          category: item.category || 'Internal Transfer',
-          correlationId: item.correlationId || `corr-${item.referenceNumber || item.reference}`,
-          journalLines: (item.splits || item.journalLines || []).map((l: any, idx: number) => ({
-            id: l.id || `jl-${idx}`,
-            entryType: l.entryType,
-            accountId: l.accountId,
-            accountNumber: l.accountNumber,
-            accountName: l.accountName,
-            amount: l.amount,
-            postBalance: l.postBalance,
-            memo: l.memo || `${l.entryType}: ${item.description}`,
-          })),
-        }));
-      }
-    } catch {
-      // Prototype fallback
-    }
-    return INITIAL_TRANSACTIONS;
+    const response = await apiClient.get<any>('/api/v1/transactions/journal');
+    const dataList = Array.isArray(response.data) ? response.data : (response.data?.items ?? []);
+    return dataList.map((item: any) => ({
+      id: item.transactionId || item.id,
+      reference: item.referenceNumber || item.reference,
+      timestamp: item.timestampUtc || item.timestamp,
+      senderAccountId: item.splits?.[0]?.accountId || item.senderAccountId || '',
+      receiverAccountId: item.splits?.[1]?.accountId || item.receiverAccountId || '',
+      senderAccountNum: item.splits?.[0]?.accountNumber || item.senderAccountNum || '',
+      receiverAccountNum: item.splits?.[1]?.accountNumber || item.receiverAccountNum || '',
+      amount: item.amount,
+      status: (item.status === 'SUCCESS' || item.status === 'Posted') ? 'Posted' : item.status,
+      idempotencyKey: item.idempotencyKey || 'uuid-backend',
+      description: item.description,
+      category: item.category || 'Internal Transfer',
+      correlationId: item.correlationId || `corr-${item.referenceNumber || item.reference}`,
+      journalLines: (item.splits || item.journalLines || item.lines || []).map((l: any, idx: number) => ({
+        id: l.id || `jl-${idx}`,
+        entryType: (l.entryType === 1 || l.entryType === 'DEBIT' || l.entryType === 'Debit') ? 'DEBIT' : 'CREDIT',
+        accountId: l.accountId,
+        accountNumber: l.accountNumber || '',
+        accountName: l.accountName || '',
+        amount: Number(l.amount) || 0,
+        postBalance: Number(l.postBalance) || 0,
+        memo: l.memo || `${l.entryType}: ${item.description || ''}`,
+      })),
+    }));
   },
 
   async postTransfer(payload: {
     sourceAccountId: string;
-    targetAccountId: string;
+    targetAccountId?: string;
+    targetAccountNumber?: string;
     amount: number;
     description: string;
     idempotencyKey?: string;
   }) {
-    const key = payload.idempotencyKey || crypto.randomUUID();
-    const body = {
+    const key = payload.idempotencyKey || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const body: any = {
       sourceAccountId: payload.sourceAccountId,
-      destinationAccountId: payload.targetAccountId,
+      destinationAccountId: payload.targetAccountId || '00000000-0000-0000-0000-000000000000',
+      destinationAccountNumber: payload.targetAccountNumber,
       amount: payload.amount,
       description: payload.description,
       idempotencyKey: key,
     };
 
-    try {
-      const res = await apiClient.post('/api/v1/transactions/transfer', body, {
-        headers: {
-          'X-Idempotency-Key': key,
-        },
-      });
-      return {
-        success: true,
-        data: res.data,
-        referenceNumber: res.data?.referenceNumber || `TXN-${Date.now().toString(36).toUpperCase()}`,
-      };
-    } catch (err: any) {
-      // In local mode or mock mode, generate standard success contract
-      return {
-        success: true,
-        referenceNumber: `TXN-2026-${Math.floor(100000 + Math.random() * 900000)}`,
-        idempotencyKey: key,
-        error: err.message,
-      };
-    }
+    const res = await apiClient.post('/api/v1/transactions/transfer', body, {
+      headers: {
+        'X-Idempotency-Key': key,
+      },
+    });
+    return {
+      success: true,
+      data: res.data,
+      referenceNumber: res.data?.referenceNumber || `TXN-${Date.now().toString(36).toUpperCase()}`,
+    };
+  },
+
+  async reverseTransaction(txnId: string): Promise<{
+    originalTransactionId: string;
+    originalReference: string;
+    status: string;
+    compensatingTransactionId: string;
+    compensatingReference: string;
+    amount?: number;
+  }> {
+    const res = await apiClient.post(`/api/v1/transactions/${txnId}/reverse`);
+    return res.data;
   },
 };
 
 export const holdsApi = {
   async getHolds(accountId?: string): Promise<TransactionHold[]> {
-    try {
-      const url = accountId ? `/api/v1/holds?accountId=${accountId}` : '/api/v1/holds';
-      const response = await apiClient.get<any[]>(url);
-      if (response.data && response.data.length > 0) {
-        return response.data.map((h: any) => ({
-          id: h.id || h.holdId,
-          accountId: h.accountId,
-          accountNumber: h.accountNumber,
-          accountName: h.accountName,
-          amount: h.amount ?? h.heldAmount,
-          reason: h.reason,
-          createdAt: h.createdAt || h.createdAtUtc,
-          expiresAt: h.expiresAtEpochMs ?? (new Date(h.expiresAtUtc).getTime()),
-          status: h.status,
-          correlationId: h.correlationId,
-        }));
-      }
-    } catch {
-      // Fallback
-    }
-    return accountId ? INITIAL_HOLDS.filter((h) => h.accountId === accountId) : INITIAL_HOLDS;
+    const url = accountId ? `/api/v1/holds?accountId=${accountId}` : '/api/v1/holds';
+    const response = await apiClient.get<any>(url);
+    const dataList = Array.isArray(response.data) ? response.data : [];
+    return dataList.map((h: any) => ({
+      id: h.id || h.holdId,
+      accountId: h.accountId,
+      accountNumber: h.accountNumber,
+      accountName: h.accountName,
+      amount: h.amount ?? h.heldAmount,
+      reason: h.reason,
+      createdAt: h.createdAt || h.createdAtUtc,
+      expiresAt: h.expiresAtEpochMs ?? (new Date(h.expiresAtUtc || Date.now()).getTime()),
+      status: h.status,
+      correlationId: h.correlationId,
+    }));
   },
 
   async applyHold(payload: {
@@ -349,160 +383,159 @@ export const holdsApi = {
     reason: string;
     durationHours: number;
   }) {
-    try {
-      const res = await apiClient.post('/api/v1/holds/apply', {
-        accountId: payload.accountId,
-        amount: payload.amount,
-        reason: payload.reason,
-        ttlMinutes: payload.durationHours * 60,
-      });
-      return { success: true, data: res.data };
-    } catch (err: any) {
-      return {
-        success: true,
-        data: {
-          holdId: `HLD-${Math.floor(10000 + Math.random() * 90000)}`,
-          amount: payload.amount,
-          status: 'Active',
-        },
-      };
-    }
+    const res = await apiClient.post('/api/v1/holds/apply', {
+      accountId: payload.accountId,
+      amount: payload.amount,
+      reason: payload.reason,
+      ttlMinutes: payload.durationHours * 60,
+    });
+    return { success: true, data: res.data };
   },
 
   async releaseHold(holdId: string, accountId?: string) {
-    try {
-      const res = await apiClient.post(`/api/v1/holds/${holdId}/release`, {
-        accountId,
-      });
-      return { success: true, data: res.data };
-    } catch {
-      return { success: true };
-    }
+    const res = await apiClient.post(`/api/v1/holds/${holdId}/release`, {
+      accountId,
+    });
+    return { success: true, data: res.data };
   },
 
   async captureHold(holdId: string, accountId?: string) {
-    try {
-      const res = await apiClient.post(`/api/v1/holds/${holdId}/capture`, {
-        accountId,
-      });
-      return { success: true, data: res.data };
-    } catch {
-      return { success: true };
-    }
+    const res = await apiClient.post(`/api/v1/holds/${holdId}/capture`, {
+      accountId,
+    });
+    return { success: true, data: res.data };
   },
 };
 
 export const reconciliationApi = {
   async getBatches(): Promise<EODBatchRecord[]> {
-    try {
-      const response = await apiClient.get<any[]>('/api/v1/reconciliation/batches');
-      if (response.data && response.data.length > 0) {
-        return response.data.map((b: any) => ({
-          id: b.id || b.batchId,
-          batchId: b.batchId || `EOD-${b.auditDate?.split('T')[0] || '2026-10-18'}`,
-          date: b.auditDate ? b.auditDate.split('T')[0] : (b.date || '2026-10-18'),
-          totalDebits: b.totalDebits,
-          totalCredits: b.totalCredits,
-          difference: b.difference,
-          status: b.status || (b.difference === 0 ? 'Completed' : 'Failed'),
-          duration: b.duration || `${b.durationMs || 420}ms`,
-          processedCount: b.processedCount || b.entryCount || 1420,
-          batchHash: b.batchHash || '0x8f2a991bce47101da421098ef732a18832a8901',
-        }));
-      }
-    } catch {
-      // Fallback
-    }
-    return INITIAL_EOD_BATCHES;
+    const response = await apiClient.get<any[]>('/api/v1/reconciliation/batches');
+    const raw = Array.isArray(response.data) ? response.data : [];
+    return raw.map((b: any) => ({
+      id: b.id || b.batchId,
+      batchId: b.batchId || `EOD-${b.auditDate?.split('T')[0] || '2026-10-18'}`,
+      date: b.auditDate ? b.auditDate.split('T')[0] : (b.date || '2026-10-18'),
+      totalDebits: b.totalDebits,
+      totalCredits: b.totalCredits,
+      difference: b.difference,
+      status: b.status || (b.difference === 0 ? 'Completed' : 'Failed'),
+      duration: b.duration || `${b.durationMs || 420}ms`,
+      processedCount: b.processedCount || b.entryCount || 1420,
+      batchHash: b.batchHash || '0x8f2a991bce47101da421098ef732a18832a8901',
+    }));
   },
 
   async triggerManualEOD(): Promise<EODBatchRecord> {
-    try {
-      const res = await apiClient.post('/api/v1/reconciliation/eod');
-      if (res.data) {
-        return {
-          id: res.data.batchId || `eod-${Date.now()}`,
-          batchId: `EOD-${new Date().toISOString().split('T')[0]}`,
-          date: new Date().toISOString().split('T')[0],
-          totalDebits: res.data.totalDebits || 32410290.0,
-          totalCredits: res.data.totalCredits || 32410290.0,
-          difference: res.data.difference || 0.0,
-          status: res.data.status || 'Completed',
-          duration: res.data.durationMs ? `${res.data.durationMs}ms` : '390ms',
-          processedCount: 1640,
-          batchHash: res.data.batchHash || `0x${crypto.randomUUID().replace(/-/g, '')}`,
-        };
-      }
-    } catch {
-      // Fallback
-    }
+    const res = await apiClient.post('/api/v1/reconciliation/eod');
     return {
-      id: `eod-${Date.now()}`,
-      batchId: `EOD-${new Date().toISOString().split('T')[0]}`,
+      id: res.data?.batchId || `eod-${Date.now()}`,
+      batchId: res.data?.batchId || `EOD-${new Date().toISOString().split('T')[0]}`,
       date: new Date().toISOString().split('T')[0],
-      totalDebits: 32410290.0,
-      totalCredits: 32410290.0,
-      difference: 0.0,
-      status: 'Completed',
-      duration: '412ms',
-      processedCount: 1640,
-      batchHash: `0x${crypto.randomUUID().replace(/-/g, '')}`,
+      totalDebits: res.data?.totalDebits ?? 0,
+      totalCredits: res.data?.totalCredits ?? 0,
+      difference: res.data?.difference ?? 0.0,
+      status: res.data?.status || 'Completed',
+      duration: res.data?.durationMs ? `${res.data.durationMs}ms` : '390ms',
+      processedCount: res.data?.processedCount ?? 0,
+      batchHash: res.data?.batchHash || `0x${crypto.randomUUID().replace(/-/g, '')}`,
     };
   },
 };
 
 export const auditApi = {
   async getAuditLogs(correlationId?: string, status?: string): Promise<AuditLogEntry[]> {
-    try {
-      const params = new URLSearchParams();
-      if (correlationId) params.append('correlationId', correlationId);
-      if (status && status !== 'ALL') params.append('status', status);
+    const params = new URLSearchParams();
+    if (correlationId) params.append('correlationId', correlationId);
+    if (status && status !== 'ALL') params.append('status', status);
 
-      const res = await apiClient.get<AuditLogEntry[]>(`/api/v1/audit/logs?${params.toString()}`);
-      if (res.data && res.data.length > 0) {
-        return res.data;
-      }
-    } catch {
-      // Fallback
-    }
-    return INITIAL_AUDIT_LOGS;
+    const res = await apiClient.get<AuditLogEntry[]>(`/api/v1/audit/logs?${params.toString()}`);
+    return Array.isArray(res.data) ? res.data : [];
   },
 };
 
 export const reportsApi = {
   async downloadTrialBalanceCsv() {
-    try {
-      const response = await apiClient.get('/api/v1/reports/trial-balance?format=csv', {
-        responseType: 'blob',
-      });
-      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `AegisLedger_TrialBalance_${new Date().toISOString().split('T')[0]}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      return { success: true };
-    } catch {
-      // Generate client-side CSV as fallback
-      const headers = ['AccountNumber,AccountName,Category,Type,Currency,LedgerBalance,AvailableBalance,ActiveHolds,Status,RowVersion'];
-      const rows = INITIAL_ACCOUNTS.map((a) => {
-        const holds = a.ledgerBalance - a.availableBalance;
-        return `"${a.accountNumber}","${a.name}","${a.category}","${a.type}","${a.currency}",${a.ledgerBalance.toFixed(2)},${a.availableBalance.toFixed(2)},${holds.toFixed(2)},"${a.status}","${a.rowVersion}"`;
-      });
-      const csvContent = [...headers, ...rows].join('\n');
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `AegisLedger_TrialBalance_${new Date().toISOString().split('T')[0]}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      return { success: true };
-    }
+    const response = await apiClient.get('/api/v1/reports/trial-balance?format=csv', {
+      responseType: 'blob',
+    });
+    const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `AegisLedger_TrialBalance_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    return { success: true };
+  },
+};
+
+export interface HangfireServer {
+  name: string;
+  workersCount: number;
+  queues: string[];
+  startedAt?: string;
+  heartbeat: string;
+}
+
+export interface HangfireStats {
+  enqueued: number;
+  processing: number;
+  succeeded: number;
+  failed: number;
+  scheduled: number;
+  deleted: number;
+  recurring: number;
+  serversCount: number;
+  workerCount: number;
+  servers: HangfireServer[];
+}
+
+export interface HangfireRecurringJob {
+  id: string;
+  cron: string;
+  queue: string;
+  nextExecution?: string;
+  lastExecution?: string;
+  lastJobId?: string;
+  lastJobState: string;
+  timeZoneId: string;
+  createdAt?: string;
+}
+
+export interface HangfireJob {
+  id: string;
+  jobType: string;
+  method: string;
+  state: string;
+  timestamp?: string;
+  durationMs?: number;
+}
+
+export const hangfireApi = {
+  async getStats(): Promise<HangfireStats> {
+    const res = await apiClient.get<HangfireStats>('/api/v1/hangfire/stats');
+    return res.data;
+  },
+
+  async getRecurringJobs(): Promise<HangfireRecurringJob[]> {
+    const res = await apiClient.get<HangfireRecurringJob[]>('/api/v1/hangfire/recurring');
+    return Array.isArray(res.data) ? res.data : [];
+  },
+
+  async triggerRecurringJob(id: string): Promise<{ success: boolean; message: string }> {
+    const res = await apiClient.post(`/api/v1/hangfire/recurring/${encodeURIComponent(id)}/trigger`);
+    return res.data;
+  },
+
+  async getSucceededJobs(count: number = 20): Promise<HangfireJob[]> {
+    const res = await apiClient.get<HangfireJob[]>(`/api/v1/hangfire/jobs/succeeded?count=${count}`);
+    return Array.isArray(res.data) ? res.data : [];
+  },
+
+  async getProcessingJobs(): Promise<HangfireJob[]> {
+    const res = await apiClient.get<HangfireJob[]>('/api/v1/hangfire/jobs/processing');
+    return Array.isArray(res.data) ? res.data : [];
   },
 };

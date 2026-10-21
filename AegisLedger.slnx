@@ -7,5 +7,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AegisLedger.Domain.Tests/AegisLedger.Domain.Tests.csproj" />
+    <Project Path="tests/AegisLedger.Tests.Integration/AegisLedger.Tests.Integration.csproj" />
   </Folder>
 </Solution>

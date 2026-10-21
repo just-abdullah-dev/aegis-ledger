@@ -27,7 +27,7 @@ interface InitiateTransferModalProps {
     amount: number;
     description: string;
     idempotencyKey: string;
-  }) => { success: boolean; message: string };
+  }) => Promise<{ success: boolean; message: string }> | { success: boolean; message: string };
   initialSourceAccountId?: string;
   onSuccessToast?: (ref: string, amount: number, srcNum: string, dstNum: string) => void;
 }
@@ -93,29 +93,35 @@ export const InitiateTransferModal: React.FC<InitiateTransferModalProps> = ({
     const keyToSend = useIdempotency ? idempotencyKey : 'bypass-none';
 
     try {
-      // 1. Dispatch backend mutation with UUID v4 idempotency key
-      const result = await transferMutation.mutateAsync({
-        sourceAccountId: sourceAccount.id,
-        targetAccountId: targetAccount.id,
-        amount: transferAmount,
-        description,
-        idempotencyKey: keyToSend,
-      });
+      let refNum: string | undefined;
 
-      // 2. Also invoke state updater if provided for immediate synchronous balance reflect
       if (onExecuteTransfer) {
-        onExecuteTransfer({
+        const res = await onExecuteTransfer({
           sourceAccountId: sourceAccount.id,
           targetAccountId: targetAccount.id,
           amount: transferAmount,
           description,
           idempotencyKey: keyToSend,
         });
+
+        if (!res.success) {
+          setErrorMsg(res.message);
+          return;
+        }
+      } else {
+        const result = await transferMutation.mutateAsync({
+          sourceAccountId: sourceAccount.id,
+          targetAccountId: targetAccount.id,
+          amount: transferAmount,
+          description,
+          idempotencyKey: keyToSend,
+        });
+        refNum = result.referenceNumber;
       }
 
       if (onSuccessToast) {
         onSuccessToast(
-          result.referenceNumber || `TXN-${Date.now().toString(36).toUpperCase()}`,
+          refNum || `TXN-${Date.now().toString(36).toUpperCase()}`,
           transferAmount,
           sourceAccount.accountNumber,
           targetAccount.accountNumber

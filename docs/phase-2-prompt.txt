@@ -47,6 +47,6 @@ PLEASE EXECUTE THE FOLLOWING STEPS FOR PHASE 2:
    - Wire `AddInfrastructure(builder.Configuration)` inside `AegisLedger.Api/Program.cs`.
 
 6. Run Initial EF Core Build Check:
-   - Execute `dotnet build AegisLedger.sln` to confirm zero compilation errors across all projects.
+   - Execute `dotnet build AegisLedger.slnx` to confirm zero compilation errors across all projects.
 
 Please generate and write out the complete C# code for Phase 2.

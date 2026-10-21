@@ -6,7 +6,7 @@ Please execute a validation check on PHASE 4 (Holds Engine, Dapper Queries, Redi
 
 VERIFICATION CHECKS:
 1. Build Verification:
-   - Run `dotnet build AegisLedger.sln` and confirm 0 compilation errors and 0 warnings.
+   - Run `dotnet build AegisLedger.slnx` and confirm 0 compilation errors and 0 warnings.
 
 2. Functional Integrity:
    - Verify `ApplyHoldCommand` reduces `AvailableBalance` while keeping `LedgerBalance` intact.
@@ -59,4 +59,4 @@ STEP-BY-STEP INSTRUCTIONS:
    - `POST /api/v1/reconciliation/eod` -> Triggers immediate manual run of `EODReconciliationJob` via Hangfire `IBackgroundJobClient`.
 
 7. Build Check:
-   - Run `dotnet build AegisLedger.sln` and ensure zero compilation errors.
+   - Run `dotnet build AegisLedger.slnx` and ensure zero compilation errors.

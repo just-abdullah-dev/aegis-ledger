@@ -43,8 +43,8 @@ export const AccountLedgerDrawer: React.FC<AccountLedgerDrawerProps> = ({
     correlationId: string;
   }> = [];
 
-  transactions.forEach((txn) => {
-    txn.journalLines.forEach((line) => {
+  (transactions || []).forEach((txn) => {
+    (txn?.journalLines || []).forEach((line) => {
       if (line.accountNumber === account.accountNumber || line.accountId === account.id) {
         accountEntries.push({
           txnId: txn.id,

@@ -21,7 +21,7 @@ interface ApplyHoldModalProps {
     amount: number;
     reason: HoldReason;
     durationHours: number;
-  }) => { success: boolean; message: string };
+  }) => Promise<{ success: boolean; message: string }> | { success: boolean; message: string };
   initialAccountId?: string;
 }
 
@@ -33,7 +33,9 @@ export const ApplyHoldModal: React.FC<ApplyHoldModalProps> = ({
   onApplyHold,
   initialAccountId,
 }) => {
-  const customerAccounts = accounts.filter((a) => a.category === 'customer');
+  const customerAccounts = (accounts || []).filter(
+    (a) => a?.category === 'customer' || a?.category?.toLowerCase() === 'customer'
+  );
 
   const [accountId, setAccountId] = useState<string>('');
   const [amountStr, setAmountStr] = useState<string>('25000');
@@ -60,11 +62,11 @@ export const ApplyHoldModal: React.FC<ApplyHoldModalProps> = ({
 
   const canSubmit = isValidAmount && !hasInsufficientAvailable && !isAccountFrozen;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
 
-    const result = onApplyHold({
+    const result = await onApplyHold({
       accountId,
       amount: holdAmount,
       reason,

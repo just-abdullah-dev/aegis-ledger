@@ -3,6 +3,7 @@ using AegisLedger.Application.Holds.Commands;
 using AegisLedger.Domain.Enums;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace AegisLedger.Api.Endpoints;
 
@@ -36,8 +37,20 @@ public static class HoldEndpoints
         group.MapPost("/apply", async (
             [FromBody] ApplyHoldRequest request,
             ISender sender,
+            HttpContext httpContext,
             CancellationToken ct) =>
         {
+            if (httpContext.User.Identity?.IsAuthenticated == true)
+            {
+                if (!httpContext.User.IsInRole("BankTeller") && !httpContext.User.IsInRole("SystemAdmin"))
+                {
+                    return Results.Json(new
+                    {
+                        error = "Access Denied: Only Bank Tellers or System Admins can place balance holds. Auditors carry read-only oversight permissions."
+                    }, statusCode: StatusCodes.Status403Forbidden);
+                }
+            }
+
             var reasonEnum = HoldReasonExtensions.FromFriendlyString(request.Reason);
             var command = new ApplyHoldCommand(
                 request.AccountId,
@@ -56,13 +69,34 @@ public static class HoldEndpoints
             Guid id,
             [FromBody] HoldActionRequest? body,
             [FromQuery] Guid? accountId,
+            IApplicationDbContext context,
             ISender sender,
+            HttpContext httpContext,
             CancellationToken ct) =>
         {
+            if (httpContext.User.Identity?.IsAuthenticated == true)
+            {
+                if (!httpContext.User.IsInRole("BankTeller") && !httpContext.User.IsInRole("SystemAdmin"))
+                {
+                    return Results.Json(new
+                    {
+                        error = "Access Denied: Only Bank Tellers or System Admins can release balance holds."
+                    }, statusCode: StatusCodes.Status403Forbidden);
+                }
+            }
+
             var accId = body?.AccountId ?? accountId ?? Guid.Empty;
             if (accId == Guid.Empty)
             {
-                return Results.BadRequest(new { error = "AccountId is required in body or query." });
+                var h = await context.TransactionHolds.FirstOrDefaultAsync(th => th.Id == id, ct);
+                if (h != null)
+                {
+                    accId = h.AccountId;
+                }
+                else
+                {
+                    return Results.BadRequest(new { error = "AccountId is required in body or query." });
+                }
             }
 
             var command = new ReleaseHoldCommand(accId, id);
@@ -75,13 +109,34 @@ public static class HoldEndpoints
             Guid id,
             [FromBody] HoldActionRequest? body,
             [FromQuery] Guid? accountId,
+            IApplicationDbContext context,
             ISender sender,
+            HttpContext httpContext,
             CancellationToken ct) =>
         {
+            if (httpContext.User.Identity?.IsAuthenticated == true)
+            {
+                if (!httpContext.User.IsInRole("BankTeller") && !httpContext.User.IsInRole("SystemAdmin"))
+                {
+                    return Results.Json(new
+                    {
+                        error = "Access Denied: Only Bank Tellers or System Admins can capture balance holds."
+                    }, statusCode: StatusCodes.Status403Forbidden);
+                }
+            }
+
             var accId = body?.AccountId ?? accountId ?? Guid.Empty;
             if (accId == Guid.Empty)
             {
-                return Results.BadRequest(new { error = "AccountId is required in body or query." });
+                var h = await context.TransactionHolds.FirstOrDefaultAsync(th => th.Id == id, ct);
+                if (h != null)
+                {
+                    accId = h.AccountId;
+                }
+                else
+                {
+                    return Results.BadRequest(new { error = "AccountId is required in body or query." });
+                }
             }
 
             var command = new CaptureHoldCommand(accId, id);

@@ -81,6 +81,7 @@ export interface TransactionHold {
   expiresAt: number; // epoch ms
   status: 'Active' | 'Released' | 'Captured';
   correlationId: string;
+  notes?: string;
 }
 
 export interface EODBatchRecord {

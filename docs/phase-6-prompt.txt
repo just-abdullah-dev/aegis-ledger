@@ -6,7 +6,7 @@ Please execute a validation check on PHASE 5 (Hangfire Workers, EOD Reconciliati
 
 VERIFICATION CHECKS:
 1. Build Verification:
-   - Run `dotnet build AegisLedger.sln` and confirm 0 compilation errors and 0 warnings.
+   - Run `dotnet build AegisLedger.slnx` and confirm 0 compilation errors and 0 warnings.
 
 2. Hangfire & Audit Verification:
    - Verify `EODReconciliationJob` computes system-wide debits vs credits and generates a valid 64-character SHA-256 batch hash.
@@ -60,6 +60,6 @@ STEP-BY-STEP INSTRUCTIONS:
    - Steps: Checkout, Setup .NET 10, Restore, Build (`dotnet build`), Run Integration Tests (`dotnet test`), Build Docker Image.
 
 7. Final Solution Build & Test Run:
-   - Run `dotnet build AegisLedger.sln`
-   - Run `dotnet test AegisLedger.sln`
+   - Run `dotnet build AegisLedger.slnx`
+   - Run `dotnet test AegisLedger.slnx`
    - Ensure 100% build success and passing test suite.

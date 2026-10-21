@@ -49,102 +49,107 @@ public class PostTransactionCommandHandler : IRequestHandler<PostTransactionComm
             );
         }
 
-        // Execute inside SERIALIZABLE transaction to prevent phantom reads & race conditions
-        await using var dbTransaction = await _context.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var strategy = _context.CreateExecutionStrategy();
 
-        try
+        return await strategy.ExecuteAsync(async () =>
         {
-            // Fetch Source and Destination accounts with row locks
-            var sourceAccount = await _context.Accounts
-                .Include(a => a.Holds)
-                .FirstOrDefaultAsync(a => a.Id == request.SourceAccountId, cancellationToken)
-                ?? throw new DomainException($"Source account with ID '{request.SourceAccountId}' was not found.");
+            // Execute inside SERIALIZABLE transaction to prevent phantom reads & race conditions
+            await using var dbTransaction = await _context.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
 
-            var destAccount = await _context.Accounts
-                .Include(a => a.Holds)
-                .FirstOrDefaultAsync(a => a.Id == request.DestinationAccountId, cancellationToken)
-                ?? throw new DomainException($"Destination account with ID '{request.DestinationAccountId}' was not found.");
-
-            // Currency matching invariant check
-            if (sourceAccount.Currency != destAccount.Currency)
+            try
             {
-                throw new CurrencyMismatchException(sourceAccount.Currency, destAccount.Currency);
+                // Fetch Source and Destination accounts with row locks
+                var sourceAccount = await _context.Accounts
+                    .Include(a => a.Holds)
+                    .FirstOrDefaultAsync(a => a.Id == request.SourceAccountId, cancellationToken)
+                    ?? throw new DomainException($"Source account with ID '{request.SourceAccountId}' was not found.");
+
+                var destAccount = await _context.Accounts
+                    .Include(a => a.Holds)
+                    .FirstOrDefaultAsync(a => a.Id == request.DestinationAccountId, cancellationToken)
+                    ?? throw new DomainException($"Destination account with ID '{request.DestinationAccountId}' was not found.");
+
+                // Currency matching invariant check
+                if (sourceAccount.Currency != destAccount.Currency)
+                {
+                    throw new CurrencyMismatchException(sourceAccount.Currency, destAccount.Currency);
+                }
+
+                // Debit Source and Credit Destination
+                var sourcePostBal = sourceAccount.Debit(request.Amount);
+                var destPostBal = destAccount.Credit(request.Amount);
+
+                // Generate unique reference number (TXN-YYYYMMDD-XXXXXXXX)
+                var refNum = $"TXN-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}";
+                var correlationId = $"corr-{Guid.NewGuid():N}";
+
+                var transaction = new Transaction(
+                    referenceNumber: refNum,
+                    idempotencyKey: idempotencyKey,
+                    amount: request.Amount,
+                    currency: sourceAccount.Currency,
+                    description: request.Description,
+                    category: "Transfer",
+                    senderAccountId: sourceAccount.Id,
+                    receiverAccountId: destAccount.Id,
+                    senderAccountNumber: sourceAccount.AccountNumber,
+                    receiverAccountNumber: destAccount.AccountNumber,
+                    correlationId: correlationId
+                );
+
+                // Add Balanced Double-Entry Journal Lines
+                transaction.AddJournalEntry(
+                    sourceAccount.Id,
+                    EntryType.Debit,
+                    request.Amount,
+                    sourcePostBal,
+                    $"DR: {request.Description}"
+                );
+
+                transaction.AddJournalEntry(
+                    destAccount.Id,
+                    EntryType.Credit,
+                    request.Amount,
+                    destPostBal,
+                    $"CR: {request.Description}"
+                );
+
+                // Enforce Domain Solvency Invariant: SUM(Debits) == SUM(Credits)
+                transaction.Post();
+
+                // Track entities
+                _context.Transactions.Add(transaction);
+
+                // Save and commit
+                await _context.SaveChangesAsync(cancellationToken);
+                await dbTransaction.CommitAsync(cancellationToken);
+
+                // Invalidate read caches
+                await _cache.RemoveAsync("accounts:list", cancellationToken);
+                await _cache.RemoveAsync($"account:{sourceAccount.Id}", cancellationToken);
+                await _cache.RemoveAsync($"account:{destAccount.Id}", cancellationToken);
+                await _cache.RemoveAsync("journal:feed", cancellationToken);
+
+                return new TransactionResponseDto(
+                    transaction.Id,
+                    transaction.ReferenceNumber,
+                    transaction.Status.ToString(),
+                    0.00m
+                );
             }
-
-            // Debit Source and Credit Destination
-            var sourcePostBal = sourceAccount.Debit(request.Amount);
-            var destPostBal = destAccount.Credit(request.Amount);
-
-            // Generate unique reference number (TXN-YYYYMMDD-XXXXXXXX)
-            var refNum = $"TXN-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}";
-            var correlationId = $"corr-{Guid.NewGuid():N}";
-
-            var transaction = new Transaction(
-                referenceNumber: refNum,
-                idempotencyKey: idempotencyKey,
-                amount: request.Amount,
-                currency: sourceAccount.Currency,
-                description: request.Description,
-                category: "Transfer",
-                senderAccountId: sourceAccount.Id,
-                receiverAccountId: destAccount.Id,
-                senderAccountNumber: sourceAccount.AccountNumber,
-                receiverAccountNumber: destAccount.AccountNumber,
-                correlationId: correlationId
-            );
-
-            // Add Balanced Double-Entry Journal Lines
-            transaction.AddJournalEntry(
-                sourceAccount.Id,
-                EntryType.Debit,
-                request.Amount,
-                sourcePostBal,
-                $"DR: {request.Description}"
-            );
-
-            transaction.AddJournalEntry(
-                destAccount.Id,
-                EntryType.Credit,
-                request.Amount,
-                destPostBal,
-                $"CR: {request.Description}"
-            );
-
-            // Enforce Domain Solvency Invariant: SUM(Debits) == SUM(Credits)
-            transaction.Post();
-
-            // Track entities
-            _context.Transactions.Add(transaction);
-
-            // Save and commit
-            await _context.SaveChangesAsync(cancellationToken);
-            await dbTransaction.CommitAsync(cancellationToken);
-
-            // Invalidate read caches
-            await _cache.RemoveAsync("accounts:list", cancellationToken);
-            await _cache.RemoveAsync($"account:{sourceAccount.Id}", cancellationToken);
-            await _cache.RemoveAsync($"account:{destAccount.Id}", cancellationToken);
-            await _cache.RemoveAsync("journal:feed", cancellationToken);
-
-            return new TransactionResponseDto(
-                transaction.Id,
-                transaction.ReferenceNumber,
-                transaction.Status.ToString(),
-                0.00m
-            );
-        }
-        catch (DbUpdateConcurrencyException ex)
-        {
-            await dbTransaction.RollbackAsync(cancellationToken);
-            throw new DomainConcurrencyException(
-                "A concurrent modification conflict occurred while updating account balances (RowVersion token mismatch). Please retry the transaction.",
-                ex
-            );
-        }
-        catch
-        {
-            await dbTransaction.RollbackAsync(cancellationToken);
-            throw;
-        }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                await dbTransaction.RollbackAsync(cancellationToken);
+                throw new DomainConcurrencyException(
+                    "A concurrent modification conflict occurred while updating account balances (RowVersion token mismatch). Please retry the transaction.",
+                    ex
+                );
+            }
+            catch
+            {
+                await dbTransaction.RollbackAsync(cancellationToken);
+                throw;
+            }
+        });
     }
 }

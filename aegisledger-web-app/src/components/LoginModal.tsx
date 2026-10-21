@@ -11,8 +11,8 @@ interface LoginModalProps {
 
 export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const { login, isLoading } = useAuthStore();
-  const [emailOrId, setEmailOrId] = useState('elena.rostova@aegisledger.bank');
-  const [password, setPassword] = useState('AegisLedger2026!#');
+  const [emailOrId, setEmailOrId] = useState('auditor');
+  const [password, setPassword] = useState('Auditor123!');
   const [persona, setPersona] = useState<UserPersona>('Compliance Auditor');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -22,18 +22,19 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
     e.preventDefault();
     setErrorMsg(null);
 
-    const success = await login(emailOrId, password, persona);
-    if (success) {
+    const res = await login(emailOrId, password, persona);
+    if (res.success) {
       onSuccess?.();
       onClose();
     } else {
-      setErrorMsg('Authentication failed. Please verify credentials.');
+      setErrorMsg(res.error || 'Authentication failed. Please verify credentials.');
     }
   };
 
-  const handleSelectPersonaPreset = (presetPersona: UserPersona, presetEmail: string) => {
+  const handleSelectPersonaPreset = (presetPersona: UserPersona, presetEmail: string, presetPass: string) => {
     setPersona(presetPersona);
     setEmailOrId(presetEmail);
+    setPassword(presetPass);
   };
 
   return (
@@ -109,7 +110,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
               <button
                 type="button"
                 onClick={() =>
-                  handleSelectPersonaPreset('Compliance Auditor', 'elena.rostova@aegisledger.bank')
+                  handleSelectPersonaPreset('Compliance Auditor', 'auditor', 'Auditor123!')
                 }
                 className={`py-2 px-2.5 rounded-lg text-xs font-medium border text-center transition ${
                   persona === 'Compliance Auditor'
@@ -122,7 +123,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
               <button
                 type="button"
                 onClick={() =>
-                  handleSelectPersonaPreset('Bank Teller', 'sarah.teller@aegisledger.bank')
+                  handleSelectPersonaPreset('Bank Teller', 'teller', 'Teller123!')
                 }
                 className={`py-2 px-2.5 rounded-lg text-xs font-medium border text-center transition ${
                   persona === 'Bank Teller'
@@ -135,7 +136,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onSucce
               <button
                 type="button"
                 onClick={() =>
-                  handleSelectPersonaPreset('System Admin', 'alex.admin@aegisledger.bank')
+                  handleSelectPersonaPreset('System Admin', 'admin', 'Admin123!')
                 }
                 className={`py-2 px-2.5 rounded-lg text-xs font-medium border text-center transition ${
                   persona === 'System Admin'

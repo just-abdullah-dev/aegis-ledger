@@ -21,18 +21,15 @@ export const HasRole: React.FC<HasRoleProps> = ({
     return <>{fallback}</>;
   }
 
-  // Check role match
-  if (roles && roles.length > 0) {
-    if (!roles.includes(user.role)) {
-      return <>{fallback}</>;
-    }
-  }
+  const roleMatches = roles && roles.length > 0 ? roles.includes(user.role) : true;
+  const personaMatches = personas && personas.length > 0 ? personas.includes(user.persona as any) : true;
 
-  // Check persona match
-  if (personas && personas.length > 0) {
-    if (!personas.includes(user.persona)) {
+  if (roles && personas) {
+    if (!roleMatches && !personaMatches) {
       return <>{fallback}</>;
     }
+  } else if (!roleMatches || !personaMatches) {
+    return <>{fallback}</>;
   }
 
   return <>{children}</>;

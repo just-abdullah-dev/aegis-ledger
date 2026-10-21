@@ -10,12 +10,20 @@ import {
   HoldReason 
 } from './types/ledger';
 import { 
-  INITIAL_ACCOUNTS, 
-  INITIAL_TRANSACTIONS, 
-  INITIAL_HOLDS, 
-  INITIAL_EOD_BATCHES, 
-  INITIAL_AUDIT_LOGS 
-} from './data/mockData';
+  useAccountsQuery, 
+  useTransactionsQuery, 
+  useHoldsQuery, 
+  useReconciliationBatchesQuery, 
+  useAuditLogsQuery 
+} from './hooks/useLedgerQueries';
+import { 
+  accountsApi, 
+  transactionsApi, 
+  holdsApi, 
+  reconciliationApi, 
+  auditApi,
+  CreateAccountPayload
+} from './lib/api-client';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { DashboardOverview } from './components/DashboardOverview';
@@ -36,31 +44,102 @@ import {
   formatCurrency 
 } from './utils/formatters';
 import { useAuthStore } from './store/useAuthStore';
-import { LoginModal } from './components/LoginModal';
+import { LoginPage } from './components/LoginPage';
+import { CustomerLoginPage } from './components/CustomerLoginPage';
+import { CustomerPortalView } from './components/CustomerPortalView';
+import { useProxyRouter } from './lib/proxy';
 
 export default function App() {
-  // Theme state
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
+  // Theme state with localStorage persistence
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem('aegis_theme');
+    return saved !== null ? saved === 'dark' : true;
+  });
 
-  // Core Ledger State
-  const [accounts, setAccounts] = useState<BankAccount[]>(INITIAL_ACCOUNTS);
-  const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
-  const [holds, setHolds] = useState<TransactionHold[]>(INITIAL_HOLDS);
-  const [eodBatches, setEodBatches] = useState<EODBatchRecord[]>(INITIAL_EOD_BATCHES);
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(INITIAL_AUDIT_LOGS);
+  // Core Ledger State (Synchronized with live SQL Server backend)
+  const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [holds, setHolds] = useState<TransactionHold[]>([]);
+  const [eodBatches, setEodBatches] = useState<EODBatchRecord[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
 
-  // Settings & Context
-  const [currentTab, setCurrentTab] = useState<string>('overview');
+  // Live Backend Data Queries
+  const { data: serverAccounts, refetch: refetchAccounts } = useAccountsQuery();
+  const { data: serverTransactions, refetch: refetchTransactions } = useTransactionsQuery();
+  const { data: serverHolds, refetch: refetchHolds } = useHoldsQuery();
+  const { data: serverBatches, refetch: refetchBatches } = useReconciliationBatchesQuery();
+  const { data: serverLogs, refetch: refetchLogs } = useAuditLogsQuery();
+
+  const refreshAllBackendData = async () => {
+    await Promise.all([
+      refetchAccounts(),
+      refetchTransactions(),
+      refetchHolds(),
+      refetchBatches(),
+      refetchLogs(),
+    ]);
+  };
+
+  useEffect(() => {
+    if (serverAccounts && Array.isArray(serverAccounts)) setAccounts(serverAccounts);
+  }, [serverAccounts]);
+
+  useEffect(() => {
+    if (serverTransactions && Array.isArray(serverTransactions)) setTransactions(serverTransactions);
+  }, [serverTransactions]);
+
+  useEffect(() => {
+    if (serverHolds && Array.isArray(serverHolds)) setHolds(serverHolds);
+  }, [serverHolds]);
+
+  useEffect(() => {
+    if (serverBatches && Array.isArray(serverBatches)) setEodBatches(serverBatches);
+  }, [serverBatches]);
+
+  useEffect(() => {
+    if (serverLogs && Array.isArray(serverLogs)) setAuditLogs(serverLogs);
+  }, [serverLogs]);
+
   const [currency, setCurrency] = useState<Currency>('USD');
-  const [persona, setPersona] = useState<UserPersona>('Compliance Auditor');
   const [idempotencyEnabled, setIdempotencyEnabled] = useState<boolean>(true);
-  const [seenIdempotencyKeys, setSeenIdempotencyKeys] = useState<Set<string>>(
-    new Set(INITIAL_TRANSACTIONS.map((t) => t.idempotencyKey))
-  );
+  const [seenIdempotencyKeys, setSeenIdempotencyKeys] = useState<Set<string>>(new Set());
 
-  // Auth Store Integration
-  const { user, initialize: initializeAuth, setPersona: setAuthPersona } = useAuthStore();
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
+  // Auth Store Integration: Persona and role are strictly derived from authenticated session
+  const { 
+    user, 
+    isAuthenticated, 
+    isLoading: isAuthLoading, 
+    initialize: initializeAuth, 
+    logout: handleLogout,
+    checkSession
+  } = useAuthStore();
+
+  // Strict role-to-persona derivation with priority order (SystemAdmin > BankTeller > ComplianceAuditor)
+  const activePersona: UserPersona = 
+    user?.role === 'SystemAdmin' || user?.persona === 'System Admin' || user?.email?.toLowerCase().includes('admin')
+      ? 'System Admin'
+      : user?.role === 'BankTeller' || user?.persona === 'Bank Teller' || user?.email?.toLowerCase().includes('teller')
+        ? 'Bank Teller'
+        : 'Compliance Auditor';
+
+  // Centralized Proxy Security Router
+  const { 
+    currentPath, 
+    isCustomerRoute, 
+    isCustomerLoginRoute,
+    navigate,
+    tabToPath,
+    pathToTab
+  } = useProxyRouter((reason) => {
+    addToast('error', 'Access Prohibited (403)', reason);
+  });
+
+  const currentTab = pathToTab(currentPath);
+
+  const handleSelectTab = (tab: string) => {
+    const targetPath = tabToPath(tab);
+    navigate(targetPath);
+  };
 
   // Interactive Modals State
   const [isTransferModalOpen, setIsTransferModalOpen] = useState<boolean>(false);
@@ -86,12 +165,14 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Sync dark class on document element
+  // Sync dark class on document element and persist preference
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
+      localStorage.setItem('aegis_theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
+      localStorage.setItem('aegis_theme', 'light');
     }
   }, [isDarkMode]);
 
@@ -100,11 +181,20 @@ export default function App() {
     initializeAuth();
   }, [initializeAuth]);
 
+  // Periodic session heartbeat: Refresh auth verification every 60 seconds
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const interval = setInterval(() => {
+      checkSession();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, checkSession]);
+
   // Listen for session expiry from API client
   useEffect(() => {
     const handleExpired = () => {
-      addToast('error', 'Session Expired', 'Please re-authenticate your JWT session.');
-      setIsLoginModalOpen(true);
+      addToast('error', 'Session Expired', 'Session expired. Please sign in again.');
+      handleLogout();
     };
     const handleOnline = () => {
       addToast('success', 'Network Reconnected', 'Connected to AegisLedger distributed consensus cluster.');
@@ -125,17 +215,17 @@ export default function App() {
   }, []);
 
   // Global Ledger Invariant Calculations
-  const totalDebits = transactions.reduce(
-    (sum, t) => sum + t.journalLines.filter((l) => l.entryType === 'DEBIT').reduce((s, l) => s + l.amount, 0),
+  const totalDebits = (transactions || []).reduce(
+    (sum, t) => sum + (t?.journalLines || []).filter((l) => l.entryType === 'DEBIT').reduce((s, l) => s + (l.amount || 0), 0),
     0
   );
-  const totalCredits = transactions.reduce(
-    (sum, t) => sum + t.journalLines.filter((l) => l.entryType === 'CREDIT').reduce((s, l) => s + l.amount, 0),
+  const totalCredits = (transactions || []).reduce(
+    (sum, t) => sum + (t?.journalLines || []).filter((l) => l.entryType === 'CREDIT').reduce((s, l) => s + (l.amount || 0), 0),
     0
   );
 
-  // 1. Execute Internal Transfer (Atomic Double-Entry Posting)
-  const handleExecuteTransfer = ({
+  // 1. Execute Internal Transfer (Atomic Double-Entry Posting via Backend)
+  const handleExecuteTransfer = async ({
     sourceAccountId,
     targetAccountId,
     amount,
@@ -164,129 +254,36 @@ export default function App() {
       setSeenIdempotencyKeys((prev) => new Set(prev).add(idempotencyKey));
     }
 
-    const source = accounts.find((a) => a.id === sourceAccountId);
-    const target = accounts.find((a) => a.id === targetAccountId);
+    try {
+      const result = await transactionsApi.postTransfer({
+        sourceAccountId,
+        targetAccountId,
+        amount,
+        description,
+        idempotencyKey: idempotencyEnabled && idempotencyKey ? idempotencyKey : crypto.randomUUID(),
+      });
 
-    if (!source || !target) {
-      return { success: false, message: 'Invalid source or destination account identifier.' };
+      await refreshAllBackendData();
+
+      addToast(
+        'success',
+        'Transaction Posted (Live Database)',
+        `${result.referenceNumber} committed to general ledger. Debits equal credits.`
+      );
+
+      return { success: true, message: 'Transfer posted successfully to database.' };
+    } catch (err: any) {
+      addToast(
+        'error',
+        'Transfer Failed',
+        err.response?.data?.detail || err.message || 'Transaction rejected by ledger engine.'
+      );
+      return { success: false, message: err.response?.data?.detail || err.message || 'Transfer failed.' };
     }
-
-    if (source.status === 'Frozen') {
-      return { success: false, message: `Account ${source.accountNumber} is FROZEN. Debits are prohibited.` };
-    }
-
-    if (target.status === 'Frozen') {
-      return { success: false, message: `Target account ${target.accountNumber} is FROZEN.` };
-    }
-
-    if (source.availableBalance < amount) {
-      return {
-        success: false,
-        message: `Insufficient available funds. Available: ${formatCurrency(source.availableBalance, currency)}.`,
-      };
-    }
-
-    const correlationId = generateCorrelationId();
-    const reference = `TXN-2026-${Math.floor(100000 + Math.random() * 900000)}`;
-    const nowIso = new Date().toISOString();
-
-    const sourcePostLedger = source.ledgerBalance - amount;
-    const sourcePostAvailable = source.availableBalance - amount;
-    const targetPostLedger = target.ledgerBalance + amount;
-    const targetPostAvailable = target.availableBalance + amount;
-
-    const nextSourceRowVersion = incrementRowVersion(source.rowVersion);
-    const nextTargetRowVersion = incrementRowVersion(target.rowVersion);
-
-    // Update Accounts
-    setAccounts((prev) =>
-      prev.map((acc) => {
-        if (acc.id === source.id) {
-          return {
-            ...acc,
-            ledgerBalance: sourcePostLedger,
-            availableBalance: sourcePostAvailable,
-            rowVersion: nextSourceRowVersion,
-          };
-        }
-        if (acc.id === target.id) {
-          return {
-            ...acc,
-            ledgerBalance: targetPostLedger,
-            availableBalance: targetPostAvailable,
-            rowVersion: nextTargetRowVersion,
-          };
-        }
-        return acc;
-      })
-    );
-
-    // Create Immutable Journal Transaction
-    const newTxn: Transaction = {
-      id: `txn-${Date.now()}`,
-      reference,
-      timestamp: nowIso,
-      senderAccountId: source.id,
-      receiverAccountId: target.id,
-      senderAccountNum: source.accountNumber,
-      receiverAccountNum: target.accountNumber,
-      amount,
-      status: 'Posted',
-      idempotencyKey: idempotencyKey || 'bypass-none',
-      description,
-      category: 'Internal Transfer',
-      correlationId,
-      journalLines: [
-        {
-          id: `jl-dr-${Date.now()}`,
-          entryType: 'DEBIT',
-          accountId: source.id,
-          accountNumber: source.accountNumber,
-          accountName: source.name,
-          amount,
-          postBalance: sourcePostLedger,
-          memo: `DR: ${description} (Settlement from ${source.accountNumber})`,
-        },
-        {
-          id: `jl-cr-${Date.now()}`,
-          entryType: 'CREDIT',
-          accountId: target.id,
-          accountNumber: target.accountNumber,
-          accountName: target.name,
-          amount,
-          postBalance: targetPostLedger,
-          memo: `CR: ${description} (Credit to ${target.accountNumber})`,
-        },
-      ],
-    };
-
-    setTransactions((prev) => [newTxn, ...prev]);
-
-    // Append to Audit Logs
-    const auditEntry: AuditLogEntry = {
-      id: `aud-${Date.now()}`,
-      correlationId,
-      timestamp: nowIso,
-      userIp: '192.168.10.45',
-      persona,
-      action: 'POST_JOURNAL_SPLIT',
-      status: 'SUCCESS',
-      details: `Committed transfer ${reference} for ${formatCurrency(amount, 'USD')}. DR: ${source.accountNumber} -> CR: ${target.accountNumber}. Concurrency locks incremented.`,
-    };
-
-    setAuditLogs((prev) => [auditEntry, ...prev]);
-
-    addToast(
-      'success',
-      'Transaction Posted',
-      `${reference} committed: ${formatCurrency(amount, currency)} from ${source.accountNumber} to ${target.accountNumber}. Net-Zero verified.`
-    );
-
-    return { success: true, message: 'Transfer posted successfully.' };
   };
 
-  // 2. Apply Account Hold
-  const handleApplyHold = ({
+  // 2. Apply Account Hold via Backend
+  const handleApplyHold = async ({
     accountId,
     amount,
     reason,
@@ -297,246 +294,88 @@ export default function App() {
     reason: HoldReason;
     durationHours: number;
   }) => {
-    const acc = accounts.find((a) => a.id === accountId);
-    if (!acc) return { success: false, message: 'Account not found.' };
+    try {
+      await holdsApi.applyHold({
+        accountId,
+        amount,
+        reason,
+        durationHours,
+      });
 
-    if (acc.status === 'Frozen') {
-      return { success: false, message: 'Cannot place hold on a frozen account.' };
+      await refreshAllBackendData();
+
+      addToast(
+        'info',
+        'Hold Enforced (Live Database)',
+        `Hold successfully applied in SQL Server database. Available balance adjusted.`
+      );
+
+      return { success: true, message: 'Hold successfully applied.' };
+    } catch (err: any) {
+      addToast('error', 'Hold Failed', err.response?.data?.detail || err.message || 'Failed to apply hold.');
+      return { success: false, message: err.response?.data?.detail || err.message || 'Failed to apply hold.' };
     }
+  };
 
-    if (acc.availableBalance < amount) {
-      return {
-        success: false,
-        message: `Hold amount exceeds available funds (${formatCurrency(acc.availableBalance, currency)}).`,
-      };
+  // 3. Release Hold (Restores Available Balance in SQL Server)
+  const handleReleaseHold = async (holdId: string) => {
+    try {
+      const targetHold = holds.find((h) => h.id === holdId);
+      await holdsApi.releaseHold(holdId, targetHold?.accountId);
+      await refreshAllBackendData();
+      addToast(
+        'success',
+        'Hold Released (Live Database)',
+        `Hold ${holdId} cleared in SQL Server. Funds returned to available balance.`
+      );
+    } catch (err: any) {
+      addToast('error', 'Release Failed', err.response?.data?.detail || err.message || 'Failed to release hold.');
     }
-
-    const holdId = `HLD-${Math.floor(10000 + Math.random() * 90000)}`;
-    const correlationId = generateCorrelationId();
-    const expiresAt = Date.now() + durationHours * 60 * 60 * 1000;
-
-    // Deduct available balance
-    setAccounts((prev) =>
-      prev.map((a) =>
-        a.id === accountId
-          ? {
-              ...a,
-              availableBalance: a.availableBalance - amount,
-              rowVersion: incrementRowVersion(a.rowVersion),
-            }
-          : a
-      )
-    );
-
-    const newHold: TransactionHold = {
-      id: holdId,
-      accountId: acc.id,
-      accountNumber: acc.accountNumber,
-      accountName: acc.name,
-      amount,
-      reason,
-      createdAt: new Date().toISOString(),
-      expiresAt,
-      status: 'Active',
-      correlationId,
-    };
-
-    setHolds((prev) => [newHold, ...prev]);
-
-    // Audit log
-    setAuditLogs((prev) => [
-      {
-        id: `aud-${Date.now()}`,
-        correlationId,
-        timestamp: new Date().toISOString(),
-        userIp: '192.168.10.45',
-        persona,
-        action: 'CREATE_ACCOUNT_HOLD',
-        status: 'SUCCESS',
-        details: `Placed ${reason} hold [${holdId}] of ${formatCurrency(amount, 'USD')} on ${acc.accountNumber}. TTL: ${durationHours}h.`,
-      },
-      ...prev,
-    ]);
-
-    addToast(
-      'info',
-      'Hold Enforced',
-      `Hold ${holdId} applied on ${acc.accountNumber} for ${formatCurrency(amount, currency)}. Available balance adjusted.`
-    );
-
-    return { success: true, message: 'Hold successfully applied.' };
   };
 
-  // 3. Release Hold (Restores Available Balance)
-  const handleReleaseHold = (holdId: string) => {
-    const targetHold = holds.find((h) => h.id === holdId);
-    if (!targetHold || targetHold.status !== 'Active') return;
-
-    setAccounts((prev) =>
-      prev.map((acc) =>
-        acc.id === targetHold.accountId
-          ? {
-              ...acc,
-              availableBalance: acc.availableBalance + targetHold.amount,
-              rowVersion: incrementRowVersion(acc.rowVersion),
-            }
-          : acc
-      )
-    );
-
-    setHolds((prev) =>
-      prev.map((h) => (h.id === holdId ? { ...h, status: 'Released' } : h))
-    );
-
-    const correlationId = generateCorrelationId();
-    setAuditLogs((prev) => [
-      {
-        id: `aud-${Date.now()}`,
-        correlationId,
-        timestamp: new Date().toISOString(),
-        userIp: '192.168.10.45',
-        persona,
-        action: 'RELEASE_ACCOUNT_HOLD',
-        status: 'SUCCESS',
-        details: `Released hold ${holdId} on account ${targetHold.accountNumber}. Restored ${formatCurrency(targetHold.amount, 'USD')} to available balance.`,
-      },
-      ...prev,
-    ]);
-
-    addToast(
-      'success',
-      'Hold Released',
-      `Hold ${holdId} cleared. ${formatCurrency(targetHold.amount, currency)} returned to available balance.`
-    );
+  // 4. Capture Hold (Commits Debit Permanently to SQL Server Ledger)
+  const handleCaptureHold = async (holdId: string) => {
+    try {
+      const targetHold = holds.find((h) => h.id === holdId);
+      await holdsApi.captureHold(holdId, targetHold?.accountId);
+      await refreshAllBackendData();
+      addToast(
+        'success',
+        'Hold Captured (Live Database)',
+        `Hold ${holdId} finalized in SQL Server ledger.`
+      );
+    } catch (err: any) {
+      addToast('error', 'Capture Failed', err.response?.data?.detail || err.message || 'Failed to capture hold.');
+    }
   };
 
-  // 4. Capture Hold (Commits Debit Permanently to Book Ledger)
-  const handleCaptureHold = (holdId: string) => {
-    const targetHold = holds.find((h) => h.id === holdId);
-    if (!targetHold || targetHold.status !== 'Active') return;
-
-    // Permanent book debit
-    setAccounts((prev) =>
-      prev.map((acc) =>
-        acc.id === targetHold.accountId
-          ? {
-              ...acc,
-              ledgerBalance: acc.ledgerBalance - targetHold.amount,
-              rowVersion: incrementRowVersion(acc.rowVersion),
-            }
-          : acc
-      )
-    );
-
-    setHolds((prev) =>
-      prev.map((h) => (h.id === holdId ? { ...h, status: 'Captured' } : h))
-    );
-
-    const correlationId = generateCorrelationId();
-    setAuditLogs((prev) => [
-      {
-        id: `aud-${Date.now()}`,
-        correlationId,
-        timestamp: new Date().toISOString(),
-        userIp: '192.168.10.45',
-        persona,
-        action: 'CAPTURE_ACCOUNT_HOLD',
-        status: 'SUCCESS',
-        details: `Captured hold ${holdId} permanently against ${targetHold.accountNumber}. Book balance debited by ${formatCurrency(targetHold.amount, 'USD')}.`,
-      },
-      ...prev,
-    ]);
-
-    addToast(
-      'success',
-      'Hold Captured',
-      `Captured ${holdId}: ${formatCurrency(targetHold.amount, currency)} finalized against book ledger.`
-    );
-  };
-
-  // 5. Reverse Transaction (Compensating Double-Entry Lines)
-  const handleReverseTransaction = (txnId: string) => {
-    const txn = transactions.find((t) => t.id === txnId);
+  // 5. Reverse Transaction via Live Backend Database
+  const handleReverseTransaction = async (txnId: string) => {
+    const txn = transactions.find((t) => t.id === txnId || t.reference === txnId);
     if (!txn || txn.status === 'Reversed') return;
 
-    const source = accounts.find((a) => a.id === txn.senderAccountId);
-    const target = accounts.find((a) => a.id === txn.receiverAccountId);
+    try {
+      let compRef = '';
+      try {
+        const res = await transactionsApi.reverseTransaction(txn.id || txn.reference);
+        compRef = res.compensatingReference;
+      } catch (directErr: any) {
+        // If direct reverse route not supported (404/405), try compensating transfer
+        if (directErr.response?.status === 404 || directErr.response?.status === 405) {
+          const result = await transactionsApi.postTransfer({
+            sourceAccountId: txn.receiverAccountId,
+            targetAccountId: txn.senderAccountId,
+            amount: txn.amount,
+            description: `Compensating reversal of ${txn.reference}`,
+            idempotencyKey: crypto.randomUUID(),
+          });
+          compRef = result.referenceNumber;
+        } else {
+          throw directErr;
+        }
+      }
 
-    if (source && target) {
-      setAccounts((prev) =>
-        prev.map((acc) => {
-          if (acc.id === source.id) {
-            return {
-              ...acc,
-              ledgerBalance: acc.ledgerBalance + txn.amount,
-              availableBalance: acc.availableBalance + txn.amount,
-              rowVersion: incrementRowVersion(acc.rowVersion),
-            };
-          }
-          if (acc.id === target.id) {
-            return {
-              ...acc,
-              ledgerBalance: acc.ledgerBalance - txn.amount,
-              availableBalance: acc.availableBalance - txn.amount,
-              rowVersion: incrementRowVersion(acc.rowVersion),
-            };
-          }
-          return acc;
-        })
-      );
-    }
-
-    setTransactions((prev) =>
-      prev.map((t) => (t.id === txnId ? { ...t, status: 'Reversed', isReversed: true } : t))
-    );
-
-    const correlationId = generateCorrelationId();
-    setAuditLogs((prev) => [
-      {
-        id: `aud-${Date.now()}`,
-        correlationId,
-        timestamp: new Date().toISOString(),
-        userIp: '10.0.4.12',
-        persona,
-        action: 'REVERSE_JOURNAL_SPLIT',
-        status: 'FLAGGED',
-        details: `Reversed transaction ${txn.reference} for ${formatCurrency(txn.amount, 'USD')}. Compensating DR/CR balance adjustments posted.`,
-      },
-      ...prev,
-    ]);
-
-    addToast(
-      'info',
-      'Transaction Reversed',
-      `Reversal completed for ${txn.reference}. Balances restored via compensating journal lines.`
-    );
-  };
-
-  // 6. Manual EOD Reconciliation Batch
-  const handleTriggerEODBatch = () => {
-    setIsReconciling(true);
-
-    setTimeout(() => {
-      const todayIso = new Date().toISOString().split('T')[0];
-      const batchId = `EOD-${todayIso}`;
-      const hash = `0x${Array.from({ length: 40 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
-      const durationMs = Math.floor(380 + Math.random() * 60);
-
-      const newBatch: EODBatchRecord = {
-        id: `eod-${Date.now()}`,
-        batchId,
-        date: todayIso,
-        totalDebits,
-        totalCredits,
-        difference: 0.0,
-        status: 'Completed',
-        duration: `${durationMs}ms`,
-        processedCount: 1420 + transactions.length,
-        batchHash: hash,
-      };
-
-      setEodBatches((prev) => [newBatch, ...prev]);
-      setIsReconciling(false);
+      await refreshAllBackendData();
 
       const correlationId = generateCorrelationId();
       setAuditLogs((prev) => [
@@ -544,64 +383,162 @@ export default function App() {
           id: `aud-${Date.now()}`,
           correlationId,
           timestamp: new Date().toISOString(),
-          userIp: '127.0.0.1 (Hangfire)',
-          persona: 'System Admin',
-          action: 'EOD_HANGFIRE_BATCH',
+          userIp: '127.0.0.1',
+          persona: activePersona,
+          action: 'TRANSACTION_REVERSED',
           status: 'SUCCESS',
-          details: `Manual EOD verification batch ${batchId} executed in ${durationMs}ms. Net zero invariant confirmed across all ${accounts.length} ledgers.`,
+          details: `Reversed transaction ${txn.reference} for ${formatCurrency(txn.amount, currency)}. Compensating entry ${compRef} posted to SQL Server.`,
         },
         ...prev,
       ]);
 
       addToast(
-        'success',
-        'EOD Reconciliation Complete',
-        `Batch ${batchId} reconciled in ${durationMs}ms with cryptographic proof. SUM(DR) == SUM(CR) verified.`
+        'info',
+        'Transaction Reversed',
+        `Compensating entry ${compRef} committed to general ledger.`
       );
-    }, 750);
+    } catch (err: any) {
+      const errorText = err.response?.data?.error || err.response?.data?.detail || err.message || 'Failed to reverse transaction.';
+      addToast('error', 'Reversal Failed', errorText);
+    }
   };
 
-  // 7. Toggle Account Frozen Status
-  const handleToggleAccountStatus = (accountId: string) => {
-    const acc = accounts.find((a) => a.id === accountId);
+  // 6. Manual EOD Reconciliation Batch via Backend
+  const handleTriggerEODBatch = async () => {
+    setIsReconciling(true);
+    try {
+      const result = await reconciliationApi.triggerManualEOD();
+      await refreshAllBackendData();
+      addToast(
+        'success',
+        'EOD Reconciled (Live Backend)',
+        `Batch ${result.batchId} processed. Zero drift verified.`
+      );
+    } catch (err: any) {
+      addToast('error', 'Reconciliation Failed', err.response?.data?.detail || err.message || 'Failed to run EOD batch.');
+    } finally {
+      setIsReconciling(false);
+    }
+  };
+
+  // 7. Toggle Account Frozen Status via Live Backend Database
+  const handleToggleAccountStatus = async (accountId: string, requestedStatus?: 'Active' | 'Frozen' | 'Closed') => {
+    const acc = accounts.find((a) => a.id === accountId || a.accountNumber === accountId);
     if (!acc) return;
 
-    const nextStatus = acc.status === 'Active' ? 'Frozen' : 'Active';
+    const nextStatus = requestedStatus || (acc.status === 'Active' ? 'Frozen' : 'Active');
 
-    setAccounts((prev) =>
-      prev.map((a) => (a.id === accountId ? { ...a, status: nextStatus } : a))
-    );
+    try {
+      await accountsApi.updateAccountStatus(acc.id || acc.accountNumber, nextStatus);
+      await refreshAllBackendData();
 
-    const correlationId = generateCorrelationId();
-    setAuditLogs((prev) => [
-      {
-        id: `aud-${Date.now()}`,
-        correlationId,
-        timestamp: new Date().toISOString(),
-        userIp: '10.0.4.19',
-        persona,
-        action: 'ACCOUNT_STATUS_CHANGE',
-        status: nextStatus === 'Frozen' ? 'FLAGGED' : 'SUCCESS',
-        details: `Account ${acc.accountNumber} status toggled to ${nextStatus.toUpperCase()} by ${persona}.`,
-      },
-      ...prev,
-    ]);
+      const correlationId = generateCorrelationId();
+      setAuditLogs((prev) => [
+        {
+          id: `aud-${Date.now()}`,
+          correlationId,
+          timestamp: new Date().toISOString(),
+          userIp: '127.0.0.1',
+          persona: activePersona,
+          action: 'ACCOUNT_STATUS_CHANGE',
+          status: nextStatus === 'Frozen' ? 'FLAGGED' : 'SUCCESS',
+          details: `Account ${acc.accountNumber} status updated to ${nextStatus.toUpperCase()} in SQL Server by ${activePersona}.`,
+        },
+        ...prev,
+      ]);
 
-    addToast(
-      nextStatus === 'Frozen' ? 'error' : 'success',
-      `Account ${nextStatus}`,
-      `${acc.accountNumber} is now marked ${nextStatus}.`
-    );
+      addToast(
+        nextStatus === 'Frozen' ? 'info' : 'success',
+        `Account ${nextStatus}`,
+        `Account ${acc.accountNumber} (${acc.name || 'Account'}) status successfully updated to ${nextStatus} in SQL Server.`
+      );
+    } catch (err: any) {
+      const errorText = err.response?.data?.error || err.response?.data?.detail || err.message || 'Failed to update account status in database.';
+      addToast(
+        'error',
+        'Status Update Failed',
+        errorText
+      );
+      throw err;
+    }
   };
+
+  // 8. Provision New Core Banking Account (System Admin Clearance)
+  const handleCreateAccount = async (payload: CreateAccountPayload) => {
+    try {
+      const result = await accountsApi.createAccount(payload);
+      await refreshAllBackendData();
+      addToast(
+        'success',
+        'Account Provisioned (Live Ledger)',
+        `${result.account.accountNumber} (${result.account.name}) registered with ${formatCurrency(result.account.ledgerBalance, currency)} balance.`
+      );
+      return { success: true, message: 'Account provisioned successfully.', account: result.account };
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.response?.data?.detail || err.message || 'Failed to provision account.';
+      addToast('error', 'Provisioning Failed', msg);
+      return { success: false, message: msg };
+    }
+  };
+
+  // 1. Strict Security Gateway: Loading & Cryptographic Token Verification
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-300">
+        <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
+        <p className="text-sm font-semibold tracking-wide text-white">Verifying AegisLedger Security Session...</p>
+        <p className="text-xs text-slate-500 mt-1">Validating HMAC-SHA256 JWT claims with .NET backend</p>
+      </div>
+    );
+  }
+
+  // 2. Unauthenticated State: Route to proper Login page
+  if (!isAuthenticated) {
+    if (isCustomerLoginRoute || isCustomerRoute) {
+      return (
+        <>
+          <CustomerLoginPage
+            onLoginSuccess={() => {
+              addToast('success', 'Customer Authenticated', 'Access granted to Retail Customer Vault.');
+              refreshAllBackendData();
+            }}
+          />
+          <Toast toasts={toasts} onDismiss={removeToast} />
+        </>
+      );
+    }
+
+    return (
+      <>
+        <LoginPage
+          onLoginSuccess={() => {
+            addToast('success', 'Authentication Successful', 'Access granted to AegisLedger core portal.');
+            refreshAllBackendData();
+          }}
+        />
+        <Toast toasts={toasts} onDismiss={removeToast} />
+      </>
+    );
+  }
+
+  // 3. Authenticated Retail Customer Partition
+  if (user?.role === 'Customer' || isCustomerRoute) {
+    return (
+      <>
+        <CustomerPortalView />
+        <Toast toasts={toasts} onDismiss={removeToast} />
+      </>
+    );
+  }
 
   return (
     <div className="min-h-screen flex bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased selection:bg-emerald-500 selection:text-white">
       {/* Fixed Sidebar */}
       <Sidebar
         currentTab={currentTab}
-        onSelectTab={setCurrentTab}
-        activeHoldsCount={holds.filter((h) => h.status === 'Active').length}
-        persona={persona}
+        onSelectTab={handleSelectTab}
+        activeHoldsCount={(holds || []).filter((h) => h?.status === 'Active').length}
+        persona={activePersona}
         isOpenOnMobile={isMobileMenuOpen}
         onCloseMobile={() => setIsMobileMenuOpen(false)}
         onOpenTransferModal={() => {
@@ -609,21 +546,18 @@ export default function App() {
           setIsTransferModalOpen(true);
         }}
         onOpenHoldModal={() => setIsHoldModalOpen(true)}
+        onLogout={handleLogout}
       />
 
       {/* Main View Area */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-screen overflow-x-hidden">
+      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
         {/* Top Header with Invariant Banner */}
         <Header
           currentTab={currentTab}
           currency={currency}
           onCurrencyChange={setCurrency}
-          persona={persona}
-          onPersonaChange={(newPersona) => {
-            setPersona(newPersona);
-            setAuthPersona(newPersona);
-          }}
-          onOpenLoginModal={() => setIsLoginModalOpen(true)}
+          persona={activePersona}
+          onLogout={handleLogout}
           user={user}
           idempotencyEnabled={idempotencyEnabled}
           onToggleIdempotency={() => {
@@ -657,7 +591,8 @@ export default function App() {
               holds={holds}
               eodBatches={eodBatches}
               currency={currency}
-              onSelectTab={setCurrentTab}
+              persona={activePersona}
+              onSelectTab={handleSelectTab}
               onOpenTransferModal={() => setIsTransferModalOpen(true)}
               onOpenHoldModal={() => setIsHoldModalOpen(true)}
               onViewAccountHistory={(acc) => setSelectedAccountForHistory(acc)}
@@ -668,7 +603,7 @@ export default function App() {
             <AccountsView
               accounts={accounts}
               currency={currency}
-              persona={persona}
+              persona={activePersona}
               onToggleStatus={handleToggleAccountStatus}
               onViewAccountHistory={(acc) => setSelectedAccountForHistory(acc)}
               onViewHolds={(acc) => setSelectedAccountForHolds(acc)}
@@ -676,6 +611,7 @@ export default function App() {
                 setTransferInitialSourceId(acc.id);
                 setIsTransferModalOpen(true);
               }}
+              onCreateAccount={handleCreateAccount}
             />
           )}
 
@@ -683,32 +619,68 @@ export default function App() {
             <TransactionsJournalView
               transactions={transactions}
               currency={currency}
-              persona={persona}
+              persona={activePersona}
               onReverseTransaction={handleReverseTransaction}
               onOpenTransferModal={() => setIsTransferModalOpen(true)}
             />
           )}
 
           {currentTab === 'holds' && (
-            <HoldsEscrowView
-              holds={holds}
-              currency={currency}
-              persona={persona}
-              onReleaseHold={handleReleaseHold}
-              onCaptureHold={handleCaptureHold}
-              onOpenHoldModal={() => setIsHoldModalOpen(true)}
-            />
+            <HasRole
+              roles={['BankTeller', 'SystemAdmin']}
+              personas={['Bank Teller', 'System Admin']}
+              fallback={
+                <div className="p-12 text-center max-w-md mx-auto my-12 rounded-2xl border border-red-200 dark:border-red-900/50 bg-red-50/50 dark:bg-red-950/20 space-y-3">
+                  <div className="w-12 h-12 rounded-xl bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 flex items-center justify-center mx-auto font-bold text-lg">
+                    403
+                  </div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Access Prohibited: Bank Teller or Admin Required
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Compliance Auditors have read-only oversight permissions and cannot manipulate or place balance holds.
+                  </p>
+                </div>
+              }
+            >
+              <HoldsEscrowView
+                holds={holds}
+                currency={currency}
+                persona={activePersona}
+                onReleaseHold={handleReleaseHold}
+                onCaptureHold={handleCaptureHold}
+                onOpenHoldModal={() => setIsHoldModalOpen(true)}
+              />
+            </HasRole>
           )}
 
           {currentTab === 'reconciliation' && (
-            <EODReconciliationView
-              batches={eodBatches}
-              auditLogs={auditLogs}
-              currency={currency}
-              persona={persona}
-              onTriggerEODBatch={handleTriggerEODBatch}
-              isReconciling={isReconciling}
-            />
+            <HasRole
+              roles={['ComplianceAuditor', 'SystemAdmin']}
+              personas={['Compliance Auditor', 'System Admin']}
+              fallback={
+                <div className="p-12 text-center max-w-md mx-auto my-12 rounded-2xl border border-red-200 dark:border-red-900/50 bg-red-50/50 dark:bg-red-950/20 space-y-3">
+                  <div className="w-12 h-12 rounded-xl bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 flex items-center justify-center mx-auto font-bold text-lg">
+                    403
+                  </div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Access Prohibited: Auditor or Admin Required
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    End-of-Day reconciliation batch execution and audit hash chain verification require Compliance Auditor or System Admin roles.
+                  </p>
+                </div>
+              }
+            >
+              <EODReconciliationView
+                batches={eodBatches}
+                auditLogs={auditLogs}
+                currency={currency}
+                persona={activePersona}
+                onTriggerEODBatch={handleTriggerEODBatch}
+                isReconciling={isReconciling}
+              />
+            </HasRole>
           )}
 
           {currentTab === 'hangfire' && (
@@ -741,7 +713,7 @@ export default function App() {
         onClose={() => setIsTransferModalOpen(false)}
         accounts={accounts}
         currency={currency}
-        persona={persona}
+        persona={activePersona}
         idempotencyEngineActive={idempotencyEnabled}
         onExecuteTransfer={handleExecuteTransfer}
         initialSourceAccountId={transferInitialSourceId}
@@ -769,14 +741,6 @@ export default function App() {
         account={selectedAccountForHolds}
         currency={currency}
         onSuccessToast={(msg) => addToast('info', 'Hold Action', msg)}
-      />
-
-      <LoginModal
-        isOpen={isLoginModalOpen}
-        onClose={() => setIsLoginModalOpen(false)}
-        onSuccess={() => {
-          addToast('success', 'Authenticated', `Session active as ${persona}`);
-        }}
       />
 
       {/* Toasts Notification Container */}

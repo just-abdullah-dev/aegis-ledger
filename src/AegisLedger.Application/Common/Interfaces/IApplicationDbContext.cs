@@ -12,6 +12,9 @@ public interface IApplicationDbContext
     DbSet<LedgerEntry> LedgerEntries { get; }
     DbSet<TransactionHold> TransactionHolds { get; }
     DbSet<EodReconciliationBatch> EodReconciliationBatches { get; }
+    DbSet<User> Users { get; }
+
+    IExecutionStrategy CreateExecutionStrategy();
 
     Task<IDbContextTransaction> BeginTransactionAsync(IsolationLevel isolationLevel, CancellationToken cancellationToken = default);
 

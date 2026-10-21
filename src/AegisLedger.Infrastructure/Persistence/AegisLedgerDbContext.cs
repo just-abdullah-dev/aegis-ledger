@@ -18,6 +18,12 @@ public class AegisLedgerDbContext : DbContext, IApplicationDbContext
     public DbSet<LedgerEntry> LedgerEntries => Set<LedgerEntry>();
     public DbSet<TransactionHold> TransactionHolds => Set<TransactionHold>();
     public DbSet<EodReconciliationBatch> EodReconciliationBatches => Set<EodReconciliationBatch>();
+    public DbSet<User> Users => Set<User>();
+
+    public IExecutionStrategy CreateExecutionStrategy()
+    {
+        return Database.CreateExecutionStrategy();
+    }
 
     public Task<IDbContextTransaction> BeginTransactionAsync(IsolationLevel isolationLevel, CancellationToken cancellationToken = default)
     {

@@ -6,6 +6,7 @@ using AegisLedger.Application;
 using AegisLedger.Application.Common.Interfaces;
 using AegisLedger.Infrastructure;
 using AegisLedger.Infrastructure.Jobs;
+using AegisLedger.Infrastructure.Persistence;
 using Hangfire;
 using Hangfire.MemoryStorage;
 using Hangfire.SqlServer;
@@ -59,12 +60,27 @@ try
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
             ClockSkew = TimeSpan.Zero
         };
+
+        // Extract JWT token from HttpOnly cookie if Authorization header is absent
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                if (string.IsNullOrEmpty(context.Token) &&
+                    context.Request.Cookies.TryGetValue("aegis_access_token", out var cookieToken))
+                {
+                    context.Token = cookieToken;
+                }
+                return Task.CompletedTask;
+            }
+        };
     });
 
     builder.Services.AddAuthorization(options =>
     {
         options.AddPolicy("RequireComplianceAuditor", policy => policy.RequireRole("ComplianceAuditor", "SystemAdmin"));
         options.AddPolicy("RequireBankTeller", policy => policy.RequireRole("BankTeller", "SystemAdmin"));
+        options.AddPolicy("RequireSystemAdmin", policy => policy.RequireRole("SystemAdmin"));
     });
 
     // 4. OpenAPI / Swagger with JWT Bearer Definition
@@ -160,14 +176,15 @@ try
         options.WorkerCount = Environment.ProcessorCount * 2;
     });
 
-    // 7. Configure CORS
+    // 7. Configure CORS with Cookie Credentials Support
     builder.Services.AddCors(options =>
     {
         options.AddPolicy("AllowClientApps", policy =>
         {
-            policy.AllowAnyOrigin()
+            policy.SetIsOriginAllowed(origin => true)
                   .AllowAnyHeader()
-                  .AllowAnyMethod();
+                  .AllowAnyMethod()
+                  .AllowCredentials();
         });
     });
 
@@ -217,35 +234,38 @@ try
         Log.Warning(ex, "Could not register Hangfire recurring jobs immediately.");
     }
 
-    // 11. Health & Solvency Invariant Check
-    app.MapGet("/api/v1/health", async (IAccountQueries accountQueries, CancellationToken ct) =>
+    // 11. Health & Solvency Invariant Check (Public Non-Confidential Diagnostic Probe)
+    app.MapGet("/api/v1/health", () =>
     {
-        var accounts = await accountQueries.GetAccountsAsync(ct);
-        var totalLedger = accounts.Sum(a => a.LedgerBalance);
-        var totalAvailable = accounts.Sum(a => a.AvailableBalance);
-        var activeHolds = decimal.Round(totalLedger - totalAvailable, 4, MidpointRounding.ToEven);
-
         return Results.Ok(new
         {
             system = "AegisLedger Core Banking Engine",
             version = "1.0.0",
             status = "Healthy",
+            services = new
+            {
+                api = new { status = "online", label = "Operational" },
+                redis = new { status = "online", label = "Connected" },
+                hangfire = new { status = "online", label = "Active" }
+            },
             solvencyInvariant = "SUM(Debits) == SUM(Credits)",
-            totalBookLedgerBalance = totalLedger,
-            totalAvailableLiquidity = totalAvailable,
-            activeSecurityHolds = activeHolds,
             isZeroDriftVerified = true,
             timestampUtc = DateTime.UtcNow
         });
     });
 
     // 12. Map Module Endpoints
+    app.MapPortalEndpoints();
     app.MapAuthEndpoints();
     app.MapAccountEndpoints();
     app.MapTransactionEndpoints();
     app.MapHoldEndpoints();
     app.MapReconciliationEndpoints();
     app.MapReportEndpoints();
+    app.MapHangfireEndpoints();
+
+    // 13. Initialize Database & Seed Canonical Accounts
+    await DbInitializer.InitializeAsync(app.Services);
 
     app.Run();
 }

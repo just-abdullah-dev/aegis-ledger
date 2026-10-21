@@ -26,6 +26,7 @@ public static class DependencyInjection
 
         // Retain use-cases for direct resolution if needed
         services.AddScoped<GetAccountsUseCase>();
+        services.AddScoped<CreateAccountUseCase>();
         services.AddScoped<PostTransferUseCase>();
 
         return services;
